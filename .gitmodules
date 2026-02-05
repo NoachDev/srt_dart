@@ -1,0 +1,3 @@
+[submodule "native/srt"]
+	path = native/srt
+	url = https://github.com/Haivision/srt.git
