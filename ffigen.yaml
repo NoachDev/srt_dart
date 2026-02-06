@@ -1,0 +1,14 @@
+name: srt_dart_bindings
+description: FFI bindings for Haivision SRT library
+output: 'lib/src/bindings/srt_bindings.dart'
+headers:
+  entry-points:
+    - "native/srt/srtcore/srt.h"
+
+compiler-opts:
+  - '-DFFIGEN'
+  - '-std=c11'
+  - '-Inative/srt/srtcore'
+  - '-Inative/srt/common'
+  - '-Inative/srt/_build'
+
