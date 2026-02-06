@@ -1,5 +1,8 @@
 library;
 
 export 'src/srt_socket.dart';
-
-// TODO: Export any libraries intended for clients of this package.
+export 'src/options.dart';
+export 'src/exceptions.dart';
+export 'src/address.dart';
+export 'src/bindings/srt_bindings.dart' show SRT_SOCKSTATUS, SRT_SOCKOPT;
+export 'main.dart';
