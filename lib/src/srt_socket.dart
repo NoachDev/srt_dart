@@ -1,10 +1,12 @@
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
 import 'dart:io';
 import 'package:srt_dart/src/options.dart';
 import 'package:srt_dart/src/exceptions.dart';
 import 'package:srt_dart/src/address.dart';
+import 'package:srt_dart/src/message.dart';
 import 'package:srt_dart/main.dart';
 
 /// Represents an SRT (Secure Reliable Transport) socket
@@ -261,6 +263,187 @@ class SrtSocket {
   void _checkNotClosed() {
     if (_isClosed) {
       throw StateError('SrtSocket is closed and cannot be used');
+    }
+  }
+
+  /// Send data over this socket in stream mode
+  ///
+  /// This wraps the native [srt_send] function and is suitable for
+  /// continuous data transmission. The data is copied to a native buffer
+  /// before transmission.
+  ///
+  /// [data] is the bytes to send
+  ///
+  /// Returns the number of bytes actually sent. May be less than the
+  /// length of [data] if the send buffer is full.
+  ///
+  /// Throws [SrtException] if sending fails
+  int sendStream(Uint8List data) {
+    _checkNotClosed();
+
+    if (data.isEmpty) return 0;
+
+    // Allocate native buffer and copy data
+    final buffer = calloc<ffi.Char>(data.length);
+    try {
+      // Copy data to native buffer
+      for (int i = 0; i < data.length; i++) {
+        buffer[i] = data[i];
+      }
+
+      final bytesSent = Srt.bindings.srt_send(_socketHandle, buffer, data.length);
+
+      if (bytesSent < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      return bytesSent;
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  /// Receive data from this socket in stream mode
+  ///
+  /// This wraps the native [srt_recv] function and is suitable for
+  /// continuous data reception. The data is read from a native buffer
+  /// and converted to a Dart [Uint8List].
+  ///
+  /// [bufferSize] is the maximum number of bytes to receive (default 1500)
+  ///
+  /// Returns a [Uint8List] containing the received data. May be empty if
+  /// the receive timeout expired. Returns fewer bytes than [bufferSize] if
+  /// less data is available.
+  ///
+  /// Throws [SrtException] if receiving fails
+  Uint8List recvStream({int bufferSize = 1500}) {
+    _checkNotClosed();
+
+    final buffer = calloc<ffi.Char>(bufferSize);
+    try {
+      final bytesReceived = Srt.bindings.srt_recv(_socketHandle, buffer, bufferSize);
+
+      if (bytesReceived < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      if (bytesReceived == 0) {
+        return Uint8List(0);
+      }
+
+      // Convert native buffer to Dart list
+      final result = Uint8List(bytesReceived);
+      for (int i = 0; i < bytesReceived; i++) {
+        result[i] = buffer[i];
+      }
+
+      return result;
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  /// Send a message over this socket
+  ///
+  /// This wraps the native [srt_sendmsg2] function and allows sending
+  /// messages with control information (TTL, in-order delivery, etc.)
+  /// in message mode rather than stream mode.
+  ///
+  /// [text] is the message data to send
+  /// [ttl] is the time-to-live in milliseconds (default -1 for infinite)
+  /// [inOrder] specifies whether the message must arrive in order (default false)
+  ///
+  /// Returns the number of bytes actually sent.
+  ///
+  /// Throws [SrtException] if sending fails
+  int sendMessage(
+    String text, {MessageControl control = const MessageControl()}) {
+    _checkNotClosed();
+
+    final payload = Uint8List.fromList(text.codeUnits);
+    // Create and initialize message control structure
+    final buffer = calloc<ffi.Char>(payload.length);
+    final mctrl = control.toNative();
+
+    try {
+      // Initialize message control
+      Srt.bindings.srt_msgctrl_init(mctrl);
+
+      // Copy payload to native buffer
+      for (int i = 0; i < payload.length; i++) {
+        buffer[i] = payload[i];
+      }
+
+      final bytesSent = Srt.bindings.srt_sendmsg2(
+        _socketHandle,
+        buffer,
+        payload.length,
+        mctrl,
+      );
+
+      if (bytesSent < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      return bytesSent;
+    } finally {
+      calloc.free(mctrl);
+      calloc.free(buffer);
+    }
+  }
+
+  /// Receive a message from this socket
+  ///
+  /// This wraps the native [srt_recvmsg2] function to receive messages
+  /// in message mode with control information.
+  ///
+  /// [bufferSize] is the maximum number of bytes to receive (default 1500)
+  ///
+  /// Returns an [SrtMessage] containing the payload and metadata.
+  /// Returns a message with empty payload if the receive timeout expired.
+  ///
+  /// Throws [SrtException] if receiving fails
+  SrtMessage recvMessage({int bufferSize = 1500}) {
+    _checkNotClosed();
+
+    final buffer = calloc<ffi.Char>(bufferSize);
+    final mctrl = calloc<SRT_MSGCTRL>();
+
+    try {
+      // Initialize message control
+      Srt.bindings.srt_msgctrl_init(mctrl);
+
+      final bytesReceived = Srt.bindings.srt_recvmsg2(
+        _socketHandle,
+        buffer,
+        bufferSize,
+        mctrl,
+      );
+
+      if (bytesReceived < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      // Convert native buffer to Dart list
+      final payload = bytesReceived > 0
+          ? Uint8List(bytesReceived)
+          : Uint8List(0);
+
+      for (int i = 0; i < bytesReceived; i++) {
+        payload[i] = buffer[i];
+      }
+
+      // Create message control info from native structure
+      final control = MessageControl.fromNative(mctrl.ref);
+
+      return SrtMessage(
+        payload: payload,
+        control: control,
+        bytesReceived: bytesReceived,
+      );
+    } finally {
+      calloc.free(buffer);
+      calloc.free(mctrl);
     }
   }
 }
