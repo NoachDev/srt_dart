@@ -61,11 +61,13 @@ void main() {
 
   // Demonstrate MessageControl builder pattern
   // Cleanup
-  print('8. Cleaning up resources...');
+  print('9. Cleaning up resources...');
   menssageClientSocket.dispose();
   print('   ✓ Client socket closed');
   menssageServerSocket.dispose();
   print('   ✓ Server socket closed');
+  fhandle.dispose();
+  print('   ✓ handle closed');
   srt.cleanUp();
   print('   ✓ SRT library cleaned up\n');
 

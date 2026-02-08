@@ -7,6 +7,7 @@ import 'package:srt_dart/src/options.dart';
 import 'package:srt_dart/src/exceptions.dart';
 import 'package:srt_dart/src/address.dart';
 import 'package:srt_dart/src/message.dart';
+import 'package:srt_dart/src/statistics.dart';
 import 'package:srt_dart/main.dart';
 
 /// Represents an SRT (Secure Reliable Transport) socket
@@ -445,5 +446,298 @@ class SrtSocket {
       calloc.free(buffer);
       calloc.free(mctrl);
     }
+  }
+
+  /// Send a file over this socket
+  ///
+  /// This wraps the native [srt_sendfile] function and efficiently
+  /// transmits a file by reading directly from disk without buffering
+  /// the entire file in memory.
+  ///
+  /// [filePath] is the path to the file to send
+  /// [offset] is the file offset to start reading from (default 0)
+  /// [size] is the number of bytes to send (default 0 = entire file from offset)
+  /// [blockSize] is the read block size in bytes (default 262144 = 256KB)
+  ///
+  /// Returns the number of bytes actually sent. The size of a file
+  /// transmission can be much larger than available system buffers,
+  /// so multiple calls may be needed.
+  ///
+  /// Throws [SrtException] if the send fails or [ArgumentError] if the file doesn't exist
+  int sendFile(
+    String filePath, {
+    int offset = 0,
+    int size = 0,
+    int blockSize = 262144,
+  }) {
+    _checkNotClosed();
+
+    // Verify file exists
+    final file = File(filePath);
+    if (!file.existsSync()) {
+
+      throw ArgumentError('File not found: $filePath');
+    }
+
+    if (offset < 0) {
+      throw ArgumentError('Offset must be non-negative, got $offset');
+    }
+
+    if (blockSize <= 0) {
+      throw ArgumentError('Block size must be positive, got $blockSize');
+    }
+
+    // Convert file path to native string
+    final pathPtr = filePath.toNativeUtf8();
+    // Offset needs to be a pointer to Int64
+    final offsetPtr = calloc<ffi.Int64>();
+    try {
+      offsetPtr.value = offset;
+      final actualSize = size <= 0 ? -1 : size;
+
+      final bytesSent = Srt.bindings.srt_sendfile(
+        _socketHandle,
+        pathPtr.cast<ffi.Char>(),
+        offsetPtr,
+        actualSize,
+        blockSize,
+      );
+
+      if (bytesSent < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      return bytesSent;
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(offsetPtr);
+    }
+  }
+
+  /// Receive a file over this socket
+  ///
+  /// This wraps the native [srt_recvfile] function and efficiently
+  /// receives a file by writing directly to disk without buffering
+  /// the entire file in memory.
+  ///
+  /// [outputPath] is the path where the file will be saved
+  /// [offset] is the file offset to start writing at (default 0)
+  /// [size] is the number of bytes to receive
+  /// [blockSize] is the write block size in bytes (default 262144 = 256KB)
+  ///
+  /// Returns the number of bytes actually received. The size of a file
+  /// transmission can be much larger than available system buffers,
+  /// so multiple calls may be needed.
+  ///
+  /// The output file is created if it doesn't exist. If it exists,
+  /// data is appended at the specified offset.
+  ///
+  /// Throws [SrtException] if the receive fails or if the parent directory doesn't exist
+  int recvFile(
+    String outputPath, {
+    int offset = 0,
+    int size = 0,
+    int blockSize = 262144,
+  }) {
+    _checkNotClosed();
+
+    // Verify the parent directory exists
+    final file = File(outputPath);
+    final parent = file.parent;
+    if (!parent.existsSync()) {
+      throw ArgumentError('Parent directory does not exist: ${parent.path}');
+    }
+
+    if (offset < 0) {
+      throw ArgumentError('Offset must be non-negative, got $offset');
+    }
+
+    if (blockSize <= 0) {
+      throw ArgumentError('Block size must be positive, got $blockSize');
+    }
+    if (size <= 0) {
+      throw ArgumentError('Size must be positive, got $size');
+    }
+
+    // Convert path to native string
+    final pathPtr = outputPath.toNativeUtf8();
+    // Offset needs to be a pointer to Int64
+    final offsetPtr = calloc<ffi.Int64>();
+    try {
+      offsetPtr.value = offset;
+      
+      final bytesReceived = Srt.bindings.srt_recvfile(
+        _socketHandle,
+        pathPtr.cast<ffi.Char>(),
+        offsetPtr,
+        size,
+        blockSize,
+      );
+
+      if (bytesReceived < 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      return bytesReceived;
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(offsetPtr);
+    }
+  }
+
+  /// Get transmission statistics for this socket
+  ///
+  /// This wraps the native [srt_bstats] function to return current
+  /// performance metrics and statistics for the socket.
+  ///
+  /// [clear] if true, resets the statistics counters after retrieval
+  ///
+  /// Returns a [SocketStats] object containing transmission metrics like
+  /// send/receive rates, packet loss, RTT, buffer usage, etc.
+  ///
+  /// Throws [SrtException] if stats retrieval fails
+  SocketStats getStats({bool clear = false}) {
+    _checkNotClosed();
+
+    final perf = calloc<CBytePerfMon>();
+    try {
+      final result = Srt.bindings.srt_bstats(
+        _socketHandle,
+        perf,
+        clear ? 1 : 0,
+      );
+
+      if (result != 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      return SocketStats.fromNative(perf.ref);
+    } finally {
+      calloc.free(perf);
+    }
+  }
+
+  /// Get the local address this socket is bound to
+  ///
+  /// This wraps [srt_getsockname] to retrieve the local socket address.
+  ///
+  /// Returns the local [InternetAddress] and port in a map: {'address': InternetAddress, 'port': int}
+  ///
+  /// Note: Only works for bound sockets (after bind() call)
+  ///
+  /// Throws [SrtException] if getsockname fails
+  Map<String, dynamic> getLocalAddress() {
+    _checkNotClosed();
+
+    final addrStorage = calloc<sockaddr_storage>();
+    final addrLen = calloc<ffi.Int>();
+    try {
+      addrLen.value = ffi.sizeOf<sockaddr_storage>();
+
+      final result = Srt.bindings.srt_getsockname(
+        _socketHandle,
+        addrStorage.cast<sockaddr>(),
+        addrLen,
+      );
+
+      if (result != 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      // Parse the address based on family
+      final family = addrStorage.ref.ss_family;
+      if (family == 2) { // AF_INET (IPv4)
+        final addr = addrStorage.cast<sockaddr_in>();
+        final s_addr = addr.ref.sin_addr.s_addr;
+        
+        // Convert to IP address string
+        final octets = [
+          (s_addr & 0xFF),
+          ((s_addr >> 8) & 0xFF),
+          ((s_addr >> 16) & 0xFF),
+          ((s_addr >> 24) & 0xFF)
+        ];
+        final ipStr = octets.join('.');
+        final port = _ntohs(addr.ref.sin_port);
+
+        return {
+          'address': InternetAddress(ipStr),
+          'port': port,
+        };
+      }
+
+      throw SrtException(
+        'Unsupported address family: $family',
+        errorCode: SRT_ERRNO.SRT_EINVOP.value,
+      );
+    } finally {
+      calloc.free(addrStorage);
+      calloc.free(addrLen);
+    }
+  }
+
+  /// Get the remote address this socket is connected to
+  ///
+  /// This wraps [srt_getpeername] to retrieve the peer socket address.
+  ///
+  /// Returns the remote [InternetAddress] and port in a map: {'address': InternetAddress, 'port': int}
+  ///
+  /// Note: Only works for connected sockets (after connect() call)
+  ///
+  /// Throws [SrtException] if getpeername fails or socket is not connected
+  Map<String, dynamic> getRemoteAddress() {
+    _checkNotClosed();
+
+    final addrStorage = calloc<sockaddr_storage>();
+    final addrLen = calloc<ffi.Int>();
+    try {
+      addrLen.value = ffi.sizeOf<sockaddr_storage>();
+
+      final result = Srt.bindings.srt_getpeername(
+        _socketHandle,
+        addrStorage.cast<sockaddr>(),
+        addrLen,
+      );
+
+      if (result != 0) {
+        throw SrtException.fromLastError(Srt.bindings);
+      }
+
+      // Parse the address based on family
+      final family = addrStorage.ref.ss_family;
+      if (family == 2) { // AF_INET (IPv4)
+        final addr = addrStorage.cast<sockaddr_in>();
+        final s_addr = addr.ref.sin_addr.s_addr;
+        
+        // Convert to IP address string
+        final octets = [
+          (s_addr & 0xFF),
+          ((s_addr >> 8) & 0xFF),
+          ((s_addr >> 16) & 0xFF),
+          ((s_addr >> 24) & 0xFF)
+        ];
+        final ipStr = octets.join('.');
+        final port = _ntohs(addr.ref.sin_port);
+
+        return {
+          'address': InternetAddress(ipStr),
+          'port': port,
+        };
+      }
+
+      throw SrtException(
+        'Unsupported address family: $family',
+        errorCode: SRT_ERRNO.SRT_EINVOP.value,
+      );
+    } finally {
+      calloc.free(addrStorage);
+      calloc.free(addrLen);
+    }
+  }
+
+  /// Helper function to convert network byte order to host byte order
+  static int _ntohs(int value) {
+    // Network byte order is big-endian, reverse the swap done by _htons
+    return ((value & 0xFF) << 8) | ((value >> 8) & 0xFF);
   }
 }

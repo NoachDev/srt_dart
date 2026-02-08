@@ -9,7 +9,7 @@ final DynamicLibrary dylib = () {
   }
   if (Platform.isAndroid || Platform.isLinux) {
     return DynamicLibrary.open(
-      '/mnt/extencion/Projects/srt_dart/lib/src/bindings/libsrt.so',
+      'lib/src/bindings/libsrt.so',
     );
   }
   if (Platform.isWindows) {
