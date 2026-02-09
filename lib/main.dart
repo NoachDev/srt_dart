@@ -25,10 +25,7 @@ class Srt{
   /// Throws [SrtException] if initialization fails
   Srt() {
     final result = bindings.srt_startup();
-    
-    if (result == -1) {
-      throw SrtException.fromLastError(bindings);
-    }
+    checkSrtResult(result, operation: 'srt_startup');
   }
 
   /// Clean up the SRT library and release all resources

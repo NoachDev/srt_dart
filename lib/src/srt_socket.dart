@@ -32,7 +32,7 @@ import 'package:srt_dart/main.dart';
 /// serverSocket.listen();
 /// final client = serverSocket.accept();
 ///
-/// // afterwards dispose the SRT library
+/// // afterwards dispose the socket
 /// *.dispose();
 ///
 /// ```
@@ -40,10 +40,13 @@ class SrtSocket {
   /// The underlying FFI bindings
 
   /// The socket file descriptor from SRT
-  late int _socketHandle;
+  final int _socketHandle;
 
   /// Whether this socket has been closed
   bool _isClosed = false;
+
+  /// Get the socket handle
+  int get socketHandle => _socketHandle;
 
   /// Get the current status of this socket
   ///
@@ -59,12 +62,8 @@ class SrtSocket {
   /// If null, default options are used.
   ///
   /// Throws [SrtException] if socket creation fails
-  SrtSocket({SocketOptions? options}) {
-    _socketHandle = Srt.bindings.srt_create_socket();
-
-    if (_socketHandle == -1) {
-      throw SrtException.fromLastError(Srt.bindings);
-    }
+  SrtSocket({SocketOptions? options}) : _socketHandle = Srt.bindings.srt_create_socket() {
+    checkSrtResult(_socketHandle, operation: 'create socket instance');
 
     // TODO: Register finalizer for automatic dispose
 
@@ -94,11 +93,7 @@ class SrtSocket {
         ffi.sizeOf<sockaddr_in>(),
       );
 
-      checkSrtResult(
-        result,
-        Srt.bindings,
-        operation: 'srt_bind($address:$port)',
-      );
+      checkSrtResult(result, operation: 'srt_bind($address:$port)');
     } finally {
       calloc.free(sockAddr);
     }
@@ -122,11 +117,7 @@ class SrtSocket {
           ? ffi.sizeOf<sockaddr_in>()
           : ffi.sizeOf<sockaddr_in6>();
       final result = Srt.bindings.srt_bind(_socketHandle, sockAddr, size);
-      checkSrtResult(
-        result,
-        Srt.bindings,
-        operation: 'srt_bind(${address.address}:$port)',
-      );
+      checkSrtResult(result, operation: 'srt_bind(${address.address}:$port)');
     } finally {
       calloc.free(sockAddr);
     }
@@ -143,11 +134,7 @@ class SrtSocket {
     _checkNotClosed();
 
     final result = Srt.bindings.srt_listen(_socketHandle, backlog);
-    checkSrtResult(
-      result,
-      Srt.bindings,
-      operation: 'srt_listen(backlog=$backlog)',
-    );
+    checkSrtResult(result, operation: 'srt_listen(backlog=$backlog)');
   }
 
   /// Accept an incoming connection on this socket
@@ -172,9 +159,7 @@ class SrtSocket {
         addrLen,
       );
 
-      if (clientHandle == -1) {
-        throw SrtException.fromLastError(Srt.bindings);
-      }
+      checkSrtResult(clientHandle, operation: 'accept');
 
       // Create new socket wrapper with the accepted connection
       final clientSocket = SrtSocket._fromHandle(clientHandle);
@@ -204,11 +189,7 @@ class SrtSocket {
         sockAddr,
         ffi.sizeOf<sockaddr_in>(),
       );
-      checkSrtResult(
-        result,
-        Srt.bindings,
-        operation: 'srt_connect($address:$port)',
-      );
+      checkSrtResult(result, operation: 'srt_connect($address:$port)');
     } finally {
       calloc.free(sockAddr);
     }
@@ -234,7 +215,6 @@ class SrtSocket {
       final result = Srt.bindings.srt_connect(_socketHandle, sockAddr, size);
       checkSrtResult(
         result,
-        Srt.bindings,
         operation: 'srt_connect(${address.address}:$port)',
       );
     } finally {
@@ -292,10 +272,14 @@ class SrtSocket {
         buffer[i] = data[i];
       }
 
-      final bytesSent = Srt.bindings.srt_send(_socketHandle, buffer, data.length);
+      final bytesSent = Srt.bindings.srt_send(
+        _socketHandle,
+        buffer,
+        data.length,
+      );
 
       if (bytesSent < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       return bytesSent;
@@ -322,10 +306,14 @@ class SrtSocket {
 
     final buffer = calloc<ffi.Char>(bufferSize);
     try {
-      final bytesReceived = Srt.bindings.srt_recv(_socketHandle, buffer, bufferSize);
+      final bytesReceived = Srt.bindings.srt_recv(
+        _socketHandle,
+        buffer,
+        bufferSize,
+      );
 
       if (bytesReceived < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       if (bytesReceived == 0) {
@@ -358,7 +346,9 @@ class SrtSocket {
   ///
   /// Throws [SrtException] if sending fails
   int sendMessage(
-    String text, {MessageControl control = const MessageControl()}) {
+    String text, {
+    MessageControl control = const MessageControl(),
+  }) {
     _checkNotClosed();
 
     final payload = Uint8List.fromList(text.codeUnits);
@@ -383,7 +373,7 @@ class SrtSocket {
       );
 
       if (bytesSent < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       return bytesSent;
@@ -422,7 +412,7 @@ class SrtSocket {
       );
 
       if (bytesReceived < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       // Convert native buffer to Dart list
@@ -475,7 +465,6 @@ class SrtSocket {
     // Verify file exists
     final file = File(filePath);
     if (!file.existsSync()) {
-
       throw ArgumentError('File not found: $filePath');
     }
 
@@ -504,7 +493,7 @@ class SrtSocket {
       );
 
       if (bytesSent < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       return bytesSent;
@@ -565,7 +554,7 @@ class SrtSocket {
     final offsetPtr = calloc<ffi.Int64>();
     try {
       offsetPtr.value = offset;
-      
+
       final bytesReceived = Srt.bindings.srt_recvfile(
         _socketHandle,
         pathPtr.cast<ffi.Char>(),
@@ -575,7 +564,7 @@ class SrtSocket {
       );
 
       if (bytesReceived < 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       return bytesReceived;
@@ -608,7 +597,7 @@ class SrtSocket {
       );
 
       if (result != 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       return SocketStats.fromNative(perf.ref);
@@ -641,29 +630,27 @@ class SrtSocket {
       );
 
       if (result != 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       // Parse the address based on family
       final family = addrStorage.ref.ss_family;
-      if (family == 2) { // AF_INET (IPv4)
+      if (family == 2) {
+        // AF_INET (IPv4)
         final addr = addrStorage.cast<sockaddr_in>();
-        final s_addr = addr.ref.sin_addr.s_addr;
-        
+        final sAddr = addr.ref.sin_addr.s_addr;
+
         // Convert to IP address string
         final octets = [
-          (s_addr & 0xFF),
-          ((s_addr >> 8) & 0xFF),
-          ((s_addr >> 16) & 0xFF),
-          ((s_addr >> 24) & 0xFF)
+          (sAddr & 0xFF),
+          ((sAddr >> 8) & 0xFF),
+          ((sAddr >> 16) & 0xFF),
+          ((sAddr >> 24) & 0xFF),
         ];
         final ipStr = octets.join('.');
         final port = _ntohs(addr.ref.sin_port);
 
-        return {
-          'address': InternetAddress(ipStr),
-          'port': port,
-        };
+        return {'address': InternetAddress(ipStr), 'port': port};
       }
 
       throw SrtException(
@@ -700,29 +687,27 @@ class SrtSocket {
       );
 
       if (result != 0) {
-        throw SrtException.fromLastError(Srt.bindings);
+        throw SrtException.fromLastError();
       }
 
       // Parse the address based on family
       final family = addrStorage.ref.ss_family;
-      if (family == 2) { // AF_INET (IPv4)
+      if (family == 2) {
+        // AF_INET (IPv4)
         final addr = addrStorage.cast<sockaddr_in>();
-        final s_addr = addr.ref.sin_addr.s_addr;
-        
+        final sAddr = addr.ref.sin_addr.s_addr;
+
         // Convert to IP address string
         final octets = [
-          (s_addr & 0xFF),
-          ((s_addr >> 8) & 0xFF),
-          ((s_addr >> 16) & 0xFF),
-          ((s_addr >> 24) & 0xFF)
+          (sAddr & 0xFF),
+          ((sAddr >> 8) & 0xFF),
+          ((sAddr >> 16) & 0xFF),
+          ((sAddr >> 24) & 0xFF),
         ];
         final ipStr = octets.join('.');
         final port = _ntohs(addr.ref.sin_port);
 
-        return {
-          'address': InternetAddress(ipStr),
-          'port': port,
-        };
+        return {'address': InternetAddress(ipStr), 'port': port};
       }
 
       throw SrtException(
@@ -739,5 +724,97 @@ class SrtSocket {
   static int _ntohs(int value) {
     // Network byte order is big-endian, reverse the swap done by _htons
     return ((value & 0xFF) << 8) | ((value >> 8) & 0xFF);
+  }
+
+  /// Receive data from this socket as a Stream
+  ///
+  /// Creates a continuous stream of data chunks from the socket.
+  /// Each emission contains a single chunk of received data.
+  /// receiving data.
+  ///
+  /// [bufferSize] is the maximum number of bytes per chunk (default 1500)
+  /// [timeoutMs] is the receive timeout in milliseconds (0 = no timeout)
+  ///
+  /// The stream can be consumed with Dart's `await for` loops:
+  /// ```dart
+  /// await for (final chunk in socket.recvStreamAsStream()) {
+  ///   print('Received ${chunk.length} bytes');
+  /// }
+  /// ```
+  ///
+  /// The stream completes when the socket is closed.
+  ///
+  /// Throws [SrtException] if receiving fails
+  Stream<Uint8List> waitStream({
+    int bufferSize = 1500,
+    int timeoutMs = 0,
+  }) async* {
+    _checkNotClosed();
+
+    while (!_isClosed) {
+      try {
+        await Future.delayed(Duration(milliseconds: timeoutMs));
+        
+        final data = recvStream(bufferSize: bufferSize);
+        if (data.isNotEmpty) {
+          yield data;
+        }
+        else{
+          // Check if socket is still connected after receiving empty data
+          if(status == SRT_SOCKSTATUS.SRTS_CLOSED){
+            break;
+          }
+        }
+
+      } catch (e) {
+        // Break on socket closed or error
+        if (_isClosed || e is SrtException) {
+          rethrow;
+        }
+      }
+    }
+  }
+
+  /// Receive messages from this socket as a Stream
+  ///
+  /// Creates a continuous stream of messages from the socket.
+  /// Each emission contains a single complete message with its metadata.
+  /// This is suitable for message mode transmission.
+  ///
+  /// [bufferSize] is the maximum message size in bytes (default 1500)
+  ///
+  /// The stream can be consumed with Dart's `await for` loops:
+  /// ```dart
+  /// await for (final msg in socket.recvMessageAsStream()) {
+  ///   print('Message: ${msg.payload}');
+  /// }
+  /// ```
+  ///
+  /// The stream completes when the socket is closed.
+  ///
+  /// Throws [SrtException] if receiving fails
+  Stream<SrtMessage> waitMessage({int bufferSize = 1500}) async* {
+    _checkNotClosed();
+
+    while (!_isClosed) {
+      try {
+        final message = recvMessage(bufferSize: bufferSize);
+        // Only emit messages with actual payload
+        if (message.bytesReceived > 0) {
+          yield message;
+        }
+
+        // Check if socket is still connected after empty receive
+        if (message.bytesReceived == 0 &&
+            status == SRT_SOCKSTATUS.SRTS_CLOSED) {
+          break;
+        }
+      } catch (e) {
+        // Break on socket closed or error
+        if (_isClosed || e is SrtException) {
+          rethrow;
+        }
+      }
+    }
   }
 }
