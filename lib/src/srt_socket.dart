@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:ffi' as ffi;
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
@@ -51,10 +53,13 @@ class SrtSocket {
   /// Get the current status of this socket
   ///
   /// Returns a [SRT_SOCKSTATUS] enum value indicating the socket state
+  ///
   SRT_SOCKSTATUS get status => Srt.bindings.srt_getsockstate(_socketHandle);
 
   /// Check if this socket is currently closed
   bool get isClosed => _isClosed;
+
+  Isolate? _acceptIsloate;
 
   /// Create a new SRT socket
   ///
@@ -62,8 +67,12 @@ class SrtSocket {
   /// If null, default options are used.
   ///
   /// Throws [SrtException] if socket creation fails
-  SrtSocket({SocketOptions? options}) : _socketHandle = Srt.bindings.srt_create_socket() {
+  ///
+  SrtSocket({SocketOptions? options})
+    : _socketHandle = Srt.bindings.srt_create_socket() {
     checkSrtResult(_socketHandle, operation: 'create socket instance');
+
+    Srt.addSocket = this;
 
     // TODO: Register finalizer for automatic dispose
 
@@ -77,41 +86,16 @@ class SrtSocket {
   ///
   /// This is typically called on the server side before [listen].
   ///
-  /// [address] can be an IPv4 string (e.g., "127.0.0.1") or "0.0.0.0" for all interfaces
+  /// [address] can be an IPv4/IPv6 InternetAddress (e.g., "127.0.0.1") or "0.0.0.0" for all interfaces
   /// [port] is the port number (1-65535)
   ///
   /// Throws [SrtException] if binding fails
-  void bind(String address, int port) {
+  ///
+  void bind(InternetAddress address, int port) {
     _checkNotClosed();
 
-    final sockAddr = SrtAddress.createIpv4Address(address, port, Srt.bindings);
+    final sockAddr = SrtAddress.fromInternetAddress(address, port);
 
-    try {
-      final result = Srt.bindings.srt_bind(
-        _socketHandle,
-        sockAddr,
-        ffi.sizeOf<sockaddr_in>(),
-      );
-
-      checkSrtResult(result, operation: 'srt_bind($address:$port)');
-    } finally {
-      calloc.free(sockAddr);
-    }
-  }
-
-  /// Bind this socket to the specified InternetAddress and port
-  ///
-  /// This variant accepts Dart's [InternetAddress] for IPv4/IPv6 flexibility
-  ///
-  /// Throws [SrtException] if binding fails
-  void bindAddress(InternetAddress address, int port) {
-    _checkNotClosed();
-
-    final sockAddr = SrtAddress.fromInternetAddress(
-      address,
-      port,
-      Srt.bindings,
-    );
     try {
       final size = address.type == InternetAddressType.IPv4
           ? ffi.sizeOf<sockaddr_in>()
@@ -130,84 +114,128 @@ class SrtSocket {
   /// [backlog] specifies the maximum number of pending connections (default 1)
   ///
   /// Throws [SrtException] if listen fails
-  void listen({int backlog = 1}) {
+  ///
+  ListenStats listen({int backlog = 1, AcceptConnectionCallback? onAccept}) {
     _checkNotClosed();
 
+    final listenStats = ListenStats(onIncomingConnection: onAccept);
+
+    if (status != SRT_SOCKSTATUS.SRTS_LISTENING) {
+      /// TODO: [onAccept] optional callback to accept/reject connections
+      ///
+      /// Example:
+      /// ```dart
+      /// serverSocket.listen(
+      ///   onAccept: (info) { /// information retrieved from client
+      ///     print('Client from ${info.peerAddress}:${info.peerPort}');
+      ///     print('Stream ID: ${info.streamId}');
+      ///
+      ///     // Return true to accept, false to reject
+      ///     return info.peerAddress == '192.168.1.100';
+      ///   }
+      /// );
+      /// ```
+
+      /// if (onAccept != null) {
+      ///
+      ///   late ffi.NativeCallable callback;
+      ///   callback = ffi.NativeCallable<SrtListenCallback>.isolateLocal(
+      ///     listenStats.nativeRegisterAttempt,
+      ///     exceptionalReturn: 0,
+      ///   );
+      ///
+      ///   listenStats.nativeCallBack = callback;
+      ///
+      ///   final lcallbackResult = Srt.bindings.srt_listen_callback(
+      ///     _socketHandle,
+      ///     callback.nativeFunction.cast(),
+      ///     ffi.nullptr,
+      ///   );
+      ///   checkSrtResult(lcallbackResult, operation: "srt_listen_callback");
+      ///   print("the return $lcallbackResult, 0 == sucess");
+      /// }
+
+      _listen(backlog);
+    }
+
+    return listenStats;
+  }
+
+  void _listen(int backlog) {
     final result = Srt.bindings.srt_listen(_socketHandle, backlog);
     checkSrtResult(result, operation: 'srt_listen(backlog=$backlog)');
   }
 
   /// Accept an incoming connection on this socket
   ///
-  /// Must call [listen] before [accept]
+  /// * Must call [listen] before [accept]
   ///
-  /// This is a blocking operation. Returns a new [SrtSocket] representing
-  /// the connected client.
+  /// * Ensure the dispose will called or has an incoming connection. Otherwise, the program will crash.
+  ///
+  /// Returns a new [SrtSocket] representing the connected client.
   ///
   /// Throws [SrtException] if accept fails
-  SrtSocket accept() {
+  ///
+  Future<SrtSocket> accept() async {
     _checkNotClosed();
+
+    if (_acceptIsloate != null) {
+      throw Exception("You already accepting incoming connections");
+    }
 
     final addrStorage = calloc<sockaddr_storage>();
     final addrLen = calloc<ffi.Int>();
     try {
       addrLen.value = ffi.sizeOf<sockaddr_storage>();
 
-      final clientHandle = Srt.bindings.srt_accept(
-        _socketHandle,
-        addrStorage.cast<sockaddr>(),
-        addrLen,
-      );
+      final exitPort = ReceivePort();
+
+      /// TODO : Add especific address
+
+      _acceptIsloate = await Isolate.spawn((send) {
+        send.send(
+          Srt.bindings.srt_accept(
+            _socketHandle,
+            addrStorage.cast<sockaddr>(),
+            addrLen,
+          ),
+        );
+      }, exitPort.sendPort);
+
+      // ProcessSignal.sigint.watch().listen((_) {
+
+      //   exitPort.sendPort.send(null);
+      //   exitPort.close();
+      // });
+
+      final clientHandle = await exitPort.first as int;
 
       checkSrtResult(clientHandle, operation: 'accept');
 
+      exitPort.close();
+
       // Create new socket wrapper with the accepted connection
-      final clientSocket = SrtSocket._fromHandle(clientHandle);
-      return clientSocket;
+      return SrtSocket.fromHandle(clientHandle);
     } finally {
       calloc.free(addrStorage);
       calloc.free(addrLen);
     }
   }
 
-  /// Connect this socket to a remote address
+  /// Connect this socket to a remote InternetAddress
   ///
-  /// [address] can be an IPv4 string (e.g., "192.168.1.1")
+  /// [address] can be an IPv4/Ipv6 InternetAddress (e.g., "192.168.1.1" or "::1")
   /// [port] is the remote port number (1-65535)
   ///
   /// This is typically called on the client side. The local address is
   /// automatically bound to an ephemeral port.
   ///
   /// Throws [SrtException] if connection fails
-  void connect(String address, int port) {
+  ///
+  void connect(InternetAddress address, int port) {
     _checkNotClosed();
 
-    final sockAddr = SrtAddress.createIpv4Address(address, port, Srt.bindings);
-    try {
-      final result = Srt.bindings.srt_connect(
-        _socketHandle,
-        sockAddr,
-        ffi.sizeOf<sockaddr_in>(),
-      );
-      checkSrtResult(result, operation: 'srt_connect($address:$port)');
-    } finally {
-      calloc.free(sockAddr);
-    }
-  }
-
-  /// Connect this socket to a remote InternetAddress
-  ///
-  /// This variant accepts Dart's [InternetAddress] for IPv4/IPv6 flexibility
-  ///
-  /// Throws [SrtException] if connection fails
-  void connectAddress(InternetAddress address, int port) {
-    _checkNotClosed();
-
-    final sockAddr = SrtAddress.fromInternetAddress(
-      address,
-      port,
-      Srt.bindings,
-    );
+    final sockAddr = SrtAddress.fromInternetAddress(address, port);
     try {
       final size = address.type == InternetAddressType.IPv4
           ? ffi.sizeOf<sockaddr_in>()
@@ -228,8 +256,11 @@ class SrtSocket {
   /// Calling any other method will throw [StateError].
   ///
   /// Safe to call multiple times (subsequent calls are no-ops)
+  ///
   void dispose() {
     if (_isClosed) return;
+
+    _acceptIsloate?.kill();
 
     final result = Srt.bindings.srt_close(_socketHandle);
     if (result != -1) {
@@ -238,7 +269,7 @@ class SrtSocket {
   }
 
   /// Internal: Create from an existing socket handle (for accept())
-  SrtSocket._fromHandle(int handle) : _socketHandle = handle;
+  SrtSocket.fromHandle(int handle) : _socketHandle = handle;
 
   /// Check if socket is closed, throw if it is
   void _checkNotClosed() {
@@ -259,6 +290,7 @@ class SrtSocket {
   /// length of [data] if the send buffer is full.
   ///
   /// Throws [SrtException] if sending fails
+  ///
   int sendStream(Uint8List data) {
     _checkNotClosed();
 
@@ -301,6 +333,7 @@ class SrtSocket {
   /// less data is available.
   ///
   /// Throws [SrtException] if receiving fails
+  ///
   Uint8List recvStream({int bufferSize = 1500}) {
     _checkNotClosed();
 
@@ -345,6 +378,7 @@ class SrtSocket {
   /// Returns the number of bytes actually sent.
   ///
   /// Throws [SrtException] if sending fails
+  ///
   int sendMessage(
     String text, {
     MessageControl control = const MessageControl(),
@@ -394,6 +428,7 @@ class SrtSocket {
   /// Returns a message with empty payload if the receive timeout expired.
   ///
   /// Throws [SrtException] if receiving fails
+  ///
   SrtMessage recvMessage({int bufferSize = 1500}) {
     _checkNotClosed();
 
@@ -454,6 +489,7 @@ class SrtSocket {
   /// so multiple calls may be needed.
   ///
   /// Throws [SrtException] if the send fails or [ArgumentError] if the file doesn't exist
+  ///
   int sendFile(
     String filePath, {
     int offset = 0,
@@ -522,6 +558,7 @@ class SrtSocket {
   /// data is appended at the specified offset.
   ///
   /// Throws [SrtException] if the receive fails or if the parent directory doesn't exist
+  ///
   int recvFile(
     String outputPath, {
     int offset = 0,
@@ -585,6 +622,7 @@ class SrtSocket {
   /// send/receive rates, packet loss, RTT, buffer usage, etc.
   ///
   /// Throws [SrtException] if stats retrieval fails
+  ///
   SocketStats getStats({bool clear = false}) {
     _checkNotClosed();
 
@@ -615,47 +653,25 @@ class SrtSocket {
   /// Note: Only works for bound sockets (after bind() call)
   ///
   /// Throws [SrtException] if getsockname fails
-  Map<String, dynamic> getLocalAddress() {
+  ///
+  SocketInterface getLocalAddress() {
     _checkNotClosed();
 
     final addrStorage = calloc<sockaddr_storage>();
     final addrLen = calloc<ffi.Int>();
     try {
       addrLen.value = ffi.sizeOf<sockaddr_storage>();
+      final addr = addrStorage.cast<sockaddr>();
 
-      final result = Srt.bindings.srt_getsockname(
-        _socketHandle,
-        addrStorage.cast<sockaddr>(),
-        addrLen,
-      );
+      final result = Srt.bindings.srt_getsockname(_socketHandle, addr, addrLen);
 
       if (result != 0) {
         throw SrtException.fromLastError();
       }
 
-      // Parse the address based on family
-      final family = addrStorage.ref.ss_family;
-      if (family == 2) {
-        // AF_INET (IPv4)
-        final addr = addrStorage.cast<sockaddr_in>();
-        final sAddr = addr.ref.sin_addr.s_addr;
-
-        // Convert to IP address string
-        final octets = [
-          (sAddr & 0xFF),
-          ((sAddr >> 8) & 0xFF),
-          ((sAddr >> 16) & 0xFF),
-          ((sAddr >> 24) & 0xFF),
-        ];
-        final ipStr = octets.join('.');
-        final port = _ntohs(addr.ref.sin_port);
-
-        return {'address': InternetAddress(ipStr), 'port': port};
-      }
-
-      throw SrtException(
-        'Unsupported address family: $family',
-        errorCode: SRT_ERRNO.SRT_EINVOP.value,
+      return SocketInterface(
+        SrtAddress.retriveAddress(addr),
+        SrtAddress.retrivePort(addr),
       );
     } finally {
       calloc.free(addrStorage);
@@ -672,58 +688,30 @@ class SrtSocket {
   /// Note: Only works for connected sockets (after connect() call)
   ///
   /// Throws [SrtException] if getpeername fails or socket is not connected
-  Map<String, dynamic> getRemoteAddress() {
+  ///
+  SocketInterface getRemoteAddress() {
     _checkNotClosed();
 
     final addrStorage = calloc<sockaddr_storage>();
     final addrLen = calloc<ffi.Int>();
     try {
       addrLen.value = ffi.sizeOf<sockaddr_storage>();
+      final addr = addrStorage.cast<sockaddr>();
 
-      final result = Srt.bindings.srt_getpeername(
-        _socketHandle,
-        addrStorage.cast<sockaddr>(),
-        addrLen,
-      );
+      final result = Srt.bindings.srt_getpeername(_socketHandle, addr, addrLen);
 
       if (result != 0) {
         throw SrtException.fromLastError();
       }
 
-      // Parse the address based on family
-      final family = addrStorage.ref.ss_family;
-      if (family == 2) {
-        // AF_INET (IPv4)
-        final addr = addrStorage.cast<sockaddr_in>();
-        final sAddr = addr.ref.sin_addr.s_addr;
-
-        // Convert to IP address string
-        final octets = [
-          (sAddr & 0xFF),
-          ((sAddr >> 8) & 0xFF),
-          ((sAddr >> 16) & 0xFF),
-          ((sAddr >> 24) & 0xFF),
-        ];
-        final ipStr = octets.join('.');
-        final port = _ntohs(addr.ref.sin_port);
-
-        return {'address': InternetAddress(ipStr), 'port': port};
-      }
-
-      throw SrtException(
-        'Unsupported address family: $family',
-        errorCode: SRT_ERRNO.SRT_EINVOP.value,
+      return SocketInterface(
+        SrtAddress.retriveAddress(addr),
+        SrtAddress.retrivePort(addr),
       );
     } finally {
       calloc.free(addrStorage);
       calloc.free(addrLen);
     }
-  }
-
-  /// Helper function to convert network byte order to host byte order
-  static int _ntohs(int value) {
-    // Network byte order is big-endian, reverse the swap done by _htons
-    return ((value & 0xFF) << 8) | ((value >> 8) & 0xFF);
   }
 
   /// Receive data from this socket as a Stream
@@ -745,30 +733,31 @@ class SrtSocket {
   /// The stream completes when the socket is closed.
   ///
   /// Throws [SrtException] if receiving fails
+  ///
   Stream<Uint8List> waitStream({
     int bufferSize = 1500,
-    int timeoutMs = 0,
+    int timeoutMs = 100,
   }) async* {
     _checkNotClosed();
 
     while (!_isClosed) {
       try {
-        await Future.delayed(Duration(milliseconds: timeoutMs));
-        
+        Future.delayed(
+          Duration(milliseconds: timeoutMs),
+        ).timeout(Duration(milliseconds: timeoutMs));
+
         final data = recvStream(bufferSize: bufferSize);
         if (data.isNotEmpty) {
           yield data;
-        }
-        else{
+        } else {
           // Check if socket is still connected after receiving empty data
-          if(status == SRT_SOCKSTATUS.SRTS_CLOSED){
+          if (status == SRT_SOCKSTATUS.SRTS_CLOSED) {
             break;
           }
         }
-
       } catch (e) {
         // Break on socket closed or error
-        if (_isClosed || e is SrtException) {
+        if (_isClosed || e is SrtException || e is TimeoutException) {
           rethrow;
         }
       }

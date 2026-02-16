@@ -1,20 +1,22 @@
+import 'dart:io';
+
 import 'package:srt_dart/srt_dart.dart';
 import 'package:test/test.dart';
 
 void main() {
   // Initialize SRT library once for all tests
 
-  final srt = Srt();
+  Srt();
   // Cleanup SRT library after all tests
   tearDownAll(() {
-    srt.cleanUp();
+    Srt.cleanUp();
   });
 
   group('SrtSocket - Lifecycle', () {
     final socket = SrtSocket(options: SocketOptions.liveMode(sender: false));
 
     test('Bind server socket to localhost', () {
-      socket.bind('127.0.0.1', 5000);
+      socket.bind(InternetAddress.loopbackIPv4, 5000);
     });
 
     test('Listen after bind succeeds', () {
@@ -30,12 +32,12 @@ void main() {
 
     test('Cannot use socket after close', () {
       expect(
-        () => socket.bind('127.0.0.1', 5000),
+        () => socket.bind(InternetAddress.loopbackIPv4, 5000),
         throwsA(isA<StateError>()),
       );
-      expect(() => socket.bind('0.0.0.0', 1234), throwsStateError);
+      expect(() => socket.bind(InternetAddress.anyIPv4, 1234), throwsStateError);
       expect(() => socket.listen(), throwsStateError);
-      expect(() => socket.connect('127.0.0.1', 1234), throwsStateError);
+      expect(() => socket.connect(InternetAddress.loopbackIPv4, 1234), throwsStateError);
     });
 
   });
@@ -47,7 +49,7 @@ void main() {
       // Note: Connection will likely timeout or fail since nothing is listening,
       // but the wrapper should handle it gracefully
       try {
-        clientSocket.connect('127.0.0.1', 5010);
+        clientSocket.connect(InternetAddress.loopbackIPv4, 5010);
       } on SrtException {
         // Expected - nothing is listening
       }
@@ -62,7 +64,7 @@ void main() {
     test('Status changes after bind', () {
       final socket = SrtSocket(options: SocketOptions.liveMode(sender: false));
       final statusBefore = socket.status;
-      socket.bind('127.0.0.1', 5020);
+      socket.bind(InternetAddress.loopbackIPv4, 5020);
       final statusAfter = socket.status;
       
       // Status should change after bind
@@ -87,8 +89,8 @@ void main() {
     
     test('Multiple servers on different ports', () {
       
-      expect(() => server1.bind('127.0.0.1', 5041), returnsNormally);
-      expect(() => server2.bind('127.0.0.1', 5042), returnsNormally);
+      expect(() => server1.bind(InternetAddress.loopbackIPv4, 5041), returnsNormally);
+      expect(() => server2.bind(InternetAddress.loopbackIPv4, 5042), returnsNormally);
       
       expect(() => server1.listen(), returnsNormally);
       expect(() => server2.listen(), returnsNormally);

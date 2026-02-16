@@ -10,8 +10,14 @@ environment:
 dependencies:
   ffigen: ^20.1.1
   ffi: ^2.1.5
-  # path: ^1.9.0
+  path: ^1.9.0
 
 dev_dependencies:
   lints: ^6.0.0
   test: ^1.25.6
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        pluginClass: SrtDartPlugin

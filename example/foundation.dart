@@ -1,18 +1,20 @@
+import 'dart:io';
+
 import 'package:srt_dart/srt_dart.dart';
 
 /// Example demonstrating the Foundation & Core Wrapper functionality
 /// 
-void main() {
+void main() async {
   print('=== SRT Dart : Foundation Layer Demo ===\n');
 
   // Initialize the SRT library (required first step)
   print('1. Initializing SRT library...');
-  final srt = Srt();
+  Srt();
   print('   ✓ SRT library initialized\n');
 
   // Create server socket with live mode configuration
   print('2. Creating server socket...');
-  final menssageServerSocket = SrtSocket(options: SocketOptions.messageMode(sender: false));
+  final menssageServerSocket = SrtSocket(options: SocketOptions.messageMode(sender: true));
   late SrtSocket fhandle;
   print('   ✓ Server socket created');
   print('   Status: ${menssageServerSocket.status.name}\n');
@@ -25,7 +27,7 @@ void main() {
 
   // Bind and listen server socket
   print('4. Server setup ...');
-  menssageServerSocket.bind('127.0.0.1', 9000);
+  menssageServerSocket.bind(InternetAddress.loopbackIPv6, 9000);
   print('   ✓ Server bound to 127.0.0.1:9000');
 
   menssageServerSocket.listen(backlog: 1);
@@ -33,9 +35,9 @@ void main() {
 
   // Attempt client connection
   print('6. Client attempting connection to 127.0.0.1:9000...');
-  menssageClientSocket.connect('127.0.0.1', 9000);
+  menssageClientSocket.connect(InternetAddress.loopbackIPv6, 9000);
   print('   ✓ Client connected');
-  fhandle = menssageServerSocket.accept();
+  fhandle = await menssageServerSocket.accept();
   print('   ✓ Server accepted connection');
   print('   Client Status: ${menssageClientSocket.status.name}');
   print('   Server Status: ${menssageServerSocket.status.name}\n');
@@ -59,16 +61,20 @@ void main() {
   print('   Received message: ${receivedMessage.text}');
   print('   Metadata: ${receivedMessage.control}\n');
 
-  // Demonstrate MessageControl builder pattern
+  print("9. The server will resend the message to confirm with the client");
+  fhandle.sendMessage(receivedMessage.text, control: MessageControl(inOrder: true, ttl: 5000));
+  final therc = menssageClientSocket.recvMessage();
+  print('   The menssage received in the server is iqual the client : ${receivedMessage.text == therc.text}\n');
+
   // Cleanup
-  print('9. Cleaning up resources...');
+  print('10. Cleaning up resources...');
   menssageClientSocket.dispose();
   print('   ✓ Client socket closed');
   menssageServerSocket.dispose();
   print('   ✓ Server socket closed');
   fhandle.dispose();
   print('   ✓ handle closed');
-  srt.cleanUp();
+  Srt.cleanUp();
   print('   ✓ SRT library cleaned up\n');
 
 }

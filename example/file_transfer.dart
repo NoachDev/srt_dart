@@ -15,7 +15,7 @@ void main() async {
 
   // Initialize the SRT library
   print('1. Initializing SRT library...');
-  final srt = Srt();
+  Srt();
   print('   ✓ SRT library initialized\n');
 
   // Create file mode sockets
@@ -29,12 +29,12 @@ void main() async {
 
   // Setup server
   print('3. Setup ...');
-  receiverSocket.bind('127.0.0.1', 9200);
+  receiverSocket.bind(InternetAddress.loopbackIPv4, 9200);
   receiverSocket.listen(backlog: 1);
   print('   ✓ Server bound to 127.0.0.1:9200');
 
-  senderSocket.connect("127.0.0.1", 9200);
-  final fileHandle = receiverSocket.accept();
+  senderSocket.connect(InternetAddress.loopbackIPv4, 9200);
+  final fileHandle = await receiverSocket.accept();
   print('   ✓ Server setup complete\n');
 
   print('4. Starting file transfer in Isolate prcesses ...\n');
@@ -55,7 +55,7 @@ void main() async {
   print('   ✓ Receiver socket closed');
   // fileHandle.dispose();
   print('   ✓ File handle closed');
-  srt.cleanUp();
+  Srt.cleanUp();
   print('   ✓ SRT library cleaned up\n');
 }
 

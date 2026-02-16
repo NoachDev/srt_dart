@@ -1,21 +1,44 @@
 import 'dart:ffi';
-import 'dart:io';
 
-final DynamicLibrary dylib = () {
-  if (Platform.isMacOS || Platform.isIOS) {
-    // unsupporte for now
-    throw UnsupportedError('MacOS and iOS are unsupported at this time.');
-    // return DynamicLibrary.open('$_libName.framework/$_libName');
+import 'package:path/path.dart' as path;
+
+DynamicLibrary get dylib {
+  try{
+    return _initlizePath(Abi.current().libName);
   }
-  if (Platform.isAndroid || Platform.isLinux) {
-    return DynamicLibrary.open(
-      'lib/src/bindings/libsrt.so',
-    );
+  catch(e){
+    final libPath = path.join(Abi.current().pathName, Abi.current().libName);
+    return _initlizePath(libPath);
   }
-  if (Platform.isWindows) {
-    // unsupporte for now
-    throw UnsupportedError('Windows are unsupported at this time.');
-    // return DynamicLibrary.open('$_libName.dll');
+}
+
+DynamicLibrary _initlizePath(String libraryPath){
+  return DynamicLibrary.open(libraryPath);
+}
+
+extension on Abi{
+  String get libName {
+    switch (Abi.current()) {
+      case Abi.linuxX64:
+        return 'libsrt.so';
+      default:
+        throw UnsupportedError(
+          'Unsupported processor architecture "${Abi.current()}". '
+          'Please open an issue on GitHub to request it.',
+        );
+    }
   }
-  throw UnsupportedError('Unknown platform: ${Platform.operatingSystem}');
-}();
+
+  String get pathName{
+    switch (Abi.current()) {
+      case Abi.linuxX64:
+        return '/usr/local/lib';
+      default:
+        throw UnsupportedError(
+          'Unsupported loacal path architecture "${Abi.current()}". '
+          'Please open an issue on GitHub to request it.',
+        );
+    }
+    
+  }
+}

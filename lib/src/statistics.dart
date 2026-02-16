@@ -1,4 +1,10 @@
+import 'dart:ffi' as ffi;
+import 'dart:io';
+
+import 'package:ffi/ffi.dart';
+import 'package:srt_dart/src/address.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
+import 'package:srt_dart/src/srt_socket.dart';
 
 /// High-level wrapper around SRT transmission statistics (SRT_TRACEBSTATS)
 ///
@@ -133,4 +139,117 @@ class SocketStats {
 
   @override
   String toString() => formattedSummary;
+}
+
+/// Callback function type for accepting/rejecting connections
+///
+/// Return true to accept the connection, false to reject it.
+///
+typedef AcceptConnectionCallback = bool Function(IncomingConnectionInfo info);
+
+typedef SrtListenCallback =
+    ffi.Int Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Int,
+      ffi.Int,
+      ffi.Pointer<sockaddr>,
+      ffi.Pointer<ffi.Char>,
+    );
+
+/// Information about an incoming connection attempt
+///
+/// [socketHandle] The new socket handle created for this connection on the callback thread
+/// [peerAddress] The IP address of the peer attempting to connect
+/// [handshakeVersion] The SRT handshake version used by the peer
+/// [streamId] The stream ID provided by the peer (can be empty)
+/// [receivedAt] Timestamp when this connection was received
+///
+class IncomingConnectionInfo {
+  final SrtSocket socketHandle;
+  final InternetAddress peerAddress;
+  final int handshakeVersion;
+  final String streamId;
+  final DateTime receivedAt;
+
+  IncomingConnectionInfo({
+    required this.socketHandle,
+    required this.peerAddress,
+    required this.handshakeVersion,
+    required this.streamId,
+  }) : receivedAt = DateTime.now();
+
+  @override
+  String toString() =>
+      'IncomingConnection(socket=$socketHandle, peer=$peerAddress, streamId="$streamId", hs=$handshakeVersion)';
+}
+
+/// Class to monitoring the conections of a SRT listener
+///
+/// [connectionAttempts] Map of all incoming connection attempts and whether they were accepted
+/// [onIncomingConnection] User-defined callback to determine if a connection should be accepted
+///
+class ListenStats {
+  final Map<IncomingConnectionInfo, bool> connectionAttempts = {};
+  late ffi.NativeCallable<Function> nativeCallBack;
+
+  AcceptConnectionCallback? onIncomingConnection;
+
+  ListenStats({this.onIncomingConnection});
+
+  /// Internal method to register an incoming connection
+  ///
+  /// When a callback ( onAccept ) is seted in the listen function
+  /// this method will be called by the native code and execute them
+  ///
+  int nativeRegisterAttempt(
+    ffi.Pointer<ffi.Void> opaq,
+    int ns,
+    int hsversion,
+    ffi.Pointer<sockaddr> peeraddr,
+    ffi.Pointer<ffi.Char> streamid,
+  ) {
+    final stream = streamid == ffi.nullptr
+        ? ''
+        : streamid.cast<Utf8>().toDartString();
+
+    final info = IncomingConnectionInfo(
+      socketHandle: SrtSocket.fromHandle(ns),
+      peerAddress: SrtAddress.retriveAddress(peeraddr),
+      handshakeVersion: hsversion,
+      streamId: stream,
+    );
+
+    final accepted = onIncomingConnection!(info);
+    connectionAttempts[info] = accepted;
+
+    return accepted ? 1 : 0;
+  }
+
+  /// Get connection attempts from a specific IP address
+  List<IncomingConnectionInfo> getAttemptsFromIp(String ip) {
+    return connectionAttempts.keys
+        .where((attempt) => attempt.peerAddress.address == ip)
+        .toList();
+  }
+
+  /// Get accepted connections
+  List<IncomingConnectionInfo> getAcceptedConnections() {
+    return connectionAttempts.keys
+        .where((attempt) => connectionAttempts[attempt]!)
+        .toList();
+  }
+
+  /// Get rejected connections
+  List<IncomingConnectionInfo> getRejectedConnections() {
+    return connectionAttempts.keys
+        .where((attempt) => !connectionAttempts[attempt]!)
+        .toList();
+  }
+
+  @override
+  String toString() {
+    final accepted = getAcceptedConnections().length;
+    final rejected = getRejectedConnections().length;
+    return 'ListenStats(total=$connectionAttempts.length, accepted=$accepted, rejected=$rejected)';
+  }
 }
