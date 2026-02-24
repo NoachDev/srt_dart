@@ -19,6 +19,10 @@ DynamicLibrary _initlizePath(String libraryPath){
 extension on Abi{
   String get libName {
     switch (Abi.current()) {
+      case Abi.androidArm:
+      case Abi.androidArm64:
+      case Abi.androidRiscv64:
+      case Abi.androidX64:
       case Abi.linuxX64:
         return 'libsrt.so';
       default:
