@@ -27,7 +27,7 @@ void main() async {
 
   // Bind and listen server socket
   print('4. Server setup ...');
-  menssageServerSocket.bind(InternetAddress.loopbackIPv6, 9000);
+  menssageServerSocket.bind(InternetAddress.loopbackIPv4, 9000);
   print('   ✓ Server bound to 127.0.0.1:9000');
 
   menssageServerSocket.listen(backlog: 1);
@@ -35,7 +35,7 @@ void main() async {
 
   // Attempt client connection
   print('6. Client attempting connection to 127.0.0.1:9000...');
-  menssageClientSocket.connect(InternetAddress.loopbackIPv6, 9000);
+  menssageClientSocket.connect(InternetAddress.loopbackIPv4, 9000);
   print('   ✓ Client connected');
   fhandle = await menssageServerSocket.accept();
   print('   ✓ Server accepted connection');

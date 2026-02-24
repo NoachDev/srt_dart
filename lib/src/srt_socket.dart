@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'dart:isolate';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
@@ -59,27 +60,32 @@ class SrtSocket {
   /// Check if this socket is currently closed
   bool get isClosed => _isClosed;
 
-  Isolate? _acceptIsloate;
+  /// The current Isolate of an accept method
+  Isolate? acceptIsloate;
+
+  /// The current Isolate of an wait method (Stream)
+  Isolate? waitIsloate;
+
+  /// Options of the socket.
+  SocketOptions? options;
 
   /// Create a new SRT socket
   ///
   /// [options] can be used to pre-configure socket settings.
-  /// If null, default options are used.
+  /// If null, a live mode option is used.
   ///
   /// Throws [SrtException] if socket creation fails
   ///
-  SrtSocket({SocketOptions? options})
-    : _socketHandle = Srt.bindings.srt_create_socket() {
+  SrtSocket({this.options}) : _socketHandle = Srt.bindings.srt_create_socket() {
     checkSrtResult(_socketHandle, operation: 'create socket instance');
 
     Srt.addSocket = this;
 
     // TODO: Register finalizer for automatic dispose
 
-    // Apply options if provided
-    if (options != null) {
-      options.applyTo(_socketHandle, Srt.bindings);
-    }
+    options ??= SocketOptions.liveMode();
+
+    options!.applyTo(_socketHandle);
   }
 
   /// Bind this socket to the specified address and port
@@ -179,7 +185,7 @@ class SrtSocket {
   Future<SrtSocket> accept() async {
     _checkNotClosed();
 
-    if (_acceptIsloate != null) {
+    if (acceptIsloate != null) {
       throw Exception("You already accepting incoming connections");
     }
 
@@ -190,9 +196,13 @@ class SrtSocket {
 
       final exitPort = ReceivePort();
 
-      /// TODO : Add especific address
+      /// TODO : Add especific address,
+      /// TODO : Do the Isolte finish the accept
+      ///
 
-      _acceptIsloate = await Isolate.spawn((send) {
+      acceptIsloate?.kill(priority: Isolate.immediate);
+
+      acceptIsloate = await Isolate.spawn((send) {
         send.send(
           Srt.bindings.srt_accept(
             _socketHandle,
@@ -202,17 +212,13 @@ class SrtSocket {
         );
       }, exitPort.sendPort);
 
-      // ProcessSignal.sigint.watch().listen((_) {
-
-      //   exitPort.sendPort.send(null);
-      //   exitPort.close();
-      // });
-
       final clientHandle = await exitPort.first as int;
 
       checkSrtResult(clientHandle, operation: 'accept');
 
       exitPort.close();
+
+      acceptIsloate = null;
 
       // Create new socket wrapper with the accepted connection
       return SrtSocket.fromHandle(clientHandle);
@@ -235,18 +241,20 @@ class SrtSocket {
   void connect(InternetAddress address, int port) {
     _checkNotClosed();
 
-    final sockAddr = SrtAddress.fromInternetAddress(address, port);
-    try {
-      final size = address.type == InternetAddressType.IPv4
-          ? ffi.sizeOf<sockaddr_in>()
-          : ffi.sizeOf<sockaddr_in6>();
-      final result = Srt.bindings.srt_connect(_socketHandle, sockAddr, size);
-      checkSrtResult(
-        result,
-        operation: 'srt_connect(${address.address}:$port)',
-      );
-    } finally {
-      calloc.free(sockAddr);
+    if (status != SRT_SOCKSTATUS.SRTS_CONNECTED) {
+      final sockAddr = SrtAddress.fromInternetAddress(address, port);
+      try {
+        final size = address.type == InternetAddressType.IPv4
+            ? ffi.sizeOf<sockaddr_in>()
+            : ffi.sizeOf<sockaddr_in6>();
+        final result = Srt.bindings.srt_connect(_socketHandle, sockAddr, size);
+        checkSrtResult(
+          result,
+          operation: 'srt_connect(${address.address}:$port)',
+        );
+      } finally {
+        calloc.free(sockAddr);
+      }
     }
   }
 
@@ -260,7 +268,8 @@ class SrtSocket {
   void dispose() {
     if (_isClosed) return;
 
-    _acceptIsloate?.kill();
+    acceptIsloate?.kill(priority: Isolate.immediate);
+    waitIsloate?.kill(priority: Isolate.immediate);
 
     final result = Srt.bindings.srt_close(_socketHandle);
     if (result != -1) {
@@ -284,35 +293,42 @@ class SrtSocket {
   /// continuous data transmission. The data is copied to a native buffer
   /// before transmission.
   ///
-  /// [data] is the bytes to send
+  /// [data] is the bytes to send.
+  /// Need be less than or equal to the payload size ( defined in [options] ) or use the chanked behavior.
   ///
-  /// Returns the number of bytes actually sent. May be less than the
-  /// length of [data] if the send buffer is full.
+  /// [chunked] is a option for send data in multply packets.
+  /// If enabled the recvStrem only can get one packet, so is recomended to use [waitStream].
+  /// See the live_mode example.
+  ///
+  /// Returns the number of bytes actually sent.
   ///
   /// Throws [SrtException] if sending fails
   ///
-  int sendStream(Uint8List data) {
+  int sendStream(Uint8List data, {bool chunked = false}) {
     _checkNotClosed();
 
     if (data.isEmpty) return 0;
 
     // Allocate native buffer and copy data
-    final buffer = calloc<ffi.Char>(data.length);
+    final buffer = calloc<ffi.Char>(options!.payloadSize);
     try {
       // Copy data to native buffer
-      for (int i = 0; i < data.length; i++) {
+      for (int i = 0; i < min(options!.payloadSize, data.length); i++) {
         buffer[i] = data[i];
       }
 
-      final bytesSent = Srt.bindings.srt_send(
+      int bytesSent = Srt.bindings.srt_send(
         _socketHandle,
         buffer,
-        data.length,
+        options!.payloadSize,
       );
 
-      if (bytesSent < 0) {
-        throw SrtException.fromLastError();
+      if ((data.length - options!.payloadSize) > 0 && chunked) {
+        final newData = data.sublist(options!.payloadSize, data.length);
+        bytesSent += sendStream(newData, chunked: true);
       }
+
+      checkSrtResult(bytesSent, operation: "send data");
 
       return bytesSent;
     } finally {
@@ -714,54 +730,64 @@ class SrtSocket {
     }
   }
 
-  /// Receive data from this socket as a Stream
+  /// Receive data from this socket in a continuous stream.
   ///
-  /// Creates a continuous stream of data chunks from the socket.
-  /// Each emission contains a single chunk of received data.
-  /// receiving data.
+  /// Emite a chunk of received data from a thread.
   ///
   /// [bufferSize] is the maximum number of bytes per chunk (default 1500)
   /// [timeoutMs] is the receive timeout in milliseconds (0 = no timeout)
+  /// [onReceive] is the callback function to handle received data.
   ///
-  /// The stream can be consumed with Dart's `await for` loops:
+  /// The stream can be consumed like this:
   /// ```dart
-  /// await for (final chunk in socket.recvStreamAsStream()) {
-  ///   print('Received ${chunk.length} bytes');
-  /// }
+  /// await waitStream(onReceive : (Uint8List data){
+  ///   print('Received: ${String.fromCharCodes(data)}');
+  /// })
   /// ```
   ///
   /// The stream completes when the socket is closed.
   ///
   /// Throws [SrtException] if receiving fails
   ///
-  Stream<Uint8List> waitStream({
+  Future<void> waitStream({
     int bufferSize = 1500,
     int timeoutMs = 100,
-  }) async* {
+    required void Function(Uint8List data) onReceive,
+  }) async {
     _checkNotClosed();
 
-    while (!_isClosed) {
-      try {
-        Future.delayed(
-          Duration(milliseconds: timeoutMs),
-        ).timeout(Duration(milliseconds: timeoutMs));
+    if (waitIsloate != null) {
+      throw Exception("You already waiting for data");
+    }
 
-        final data = recvStream(bufferSize: bufferSize);
-        if (data.isNotEmpty) {
-          yield data;
-        } else {
-          // Check if socket is still connected after receiving empty data
-          if (status == SRT_SOCKSTATUS.SRTS_CLOSED) {
-            break;
+    final exitPort = ReceivePort();
+
+    waitIsloate = await Isolate.spawn((SendPort sendPort) {
+      while (!isClosed) {
+        try {
+          // Future.delayed(
+          //   Duration(milliseconds: timeoutMs),
+          // ).timeout(Duration(milliseconds: timeoutMs));
+          final data = recvStream(bufferSize: bufferSize);
+
+          if (data.isNotEmpty) {
+            onReceive(data);
+          }
+        } catch (e) {
+          // Break on socket closed or error
+          if (_isClosed || e is SrtException || e is TimeoutException) {
+            rethrow;
           }
         }
-      } catch (e) {
-        // Break on socket closed or error
-        if (_isClosed || e is SrtException || e is TimeoutException) {
-          rethrow;
-        }
       }
-    }
+      sendPort.send("waitStream Finished");
+    }, exitPort.sendPort, debugName: "Isolate from waitStream in socket $_socketHandle");
+
+    await exitPort.first;
+
+    exitPort.close();
+
+    waitIsloate = null;
   }
 
   /// Receive messages from this socket as a Stream

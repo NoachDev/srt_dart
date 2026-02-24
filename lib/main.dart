@@ -1,6 +1,5 @@
 import 'package:srt_dart/src/open.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
-import 'package:srt_dart/src/exceptions.dart';
 import 'package:srt_dart/srt_dart.dart';
 
 /// Global SRT instance for lifecycle management
@@ -48,10 +47,11 @@ class Srt {
       socket.dispose();
     }
 
+    _sokets.clear();
+
     if (_initialized) {
       bindings.srt_cleanup();
       _initialized = false;
-
     }
   }
 }

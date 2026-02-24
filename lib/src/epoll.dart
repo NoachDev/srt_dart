@@ -253,7 +253,7 @@ class SrtEpoll {
   /// ```
   ///
   /// The stream continues indefinitely until the epoll is disposed.
-  /// To stop the stream, call [dispose()].
+  /// To stop the stream, call [dispose].
   ///
   /// Throws [SrtException] if wait operations fail
   Stream<EpollEvent> waitAsStream({int timeoutMs = 1000}) async* {
