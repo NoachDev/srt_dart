@@ -1,7 +1,9 @@
 import 'dart:ffi' as ffi;
+import 'dart:math';
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
 import 'package:srt_dart/src/exceptions.dart';
+import 'package:srt_dart/main.dart';
 
 /// Socket option configuration for SRT sockets
 ///
@@ -62,6 +64,13 @@ class SocketOptions {
   /// SRTO_PASSPHRASE: Passphrase for encryption
   String? encryptionPassphrase;
 
+  /// SRTO_PAYLOADSIZE: size of payload (bytes)
+  /// 
+  /// Is a value less then or equal to 1456.
+  int payloadSize;
+
+  late int _socketHandle;
+
   /// Creates a new SocketOptions with optional initial values
   SocketOptions({
     this.mss,
@@ -78,20 +87,19 @@ class SocketOptions {
     this.overheadRoom,
     this.encryptionKeyLength,
     this.encryptionPassphrase,
+    this.payloadSize = 1316,
   });
 
   /// Creates an options object optimized for live streaming
   factory SocketOptions.liveMode({bool sender = true}) => SocketOptions(
     transType: 0, // SRTT_LIVE
     sender: sender,
-    messageApi: false,
   );
 
   /// Creates an options object optimized for file transfer
   factory SocketOptions.fileMode({bool sender = true}) => SocketOptions(
     transType: 1, // SRTT_FILE
     sender: sender,
-    messageApi: false,
   );
 
   /// Creates an options object optimized for message-based communication
@@ -102,24 +110,27 @@ class SocketOptions {
   ///
   /// This method sets all configured options on the given socket handle.
   /// Non-null options are applied with [srt_setsockopt].
-  void applyTo(int socketHandle, srt_dart_bindings bindings) {
+  void applyTo(int socketHandle) {
+    _socketHandle = socketHandle;
+
+    if (payloadSize != 1316){
+      payloadSize = min(payloadSize, 1456);
+      _setSockOpt(SRT_SOCKOPT.SRTO_PAYLOADSIZE, payloadSize);
+    }
+
     if (transType != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_TRANSTYPE,
         transType!,
       );
     }
 
     if (mss != null) {
-      _setSockOpt(socketHandle, bindings, SRT_SOCKOPT.SRTO_MSS, mss!);
+      _setSockOpt(SRT_SOCKOPT.SRTO_MSS, mss!);
     }
 
     if (messageApi != null) {
       _setSockOptBool(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_MESSAGEAPI,
         messageApi!,
       );
@@ -127,8 +138,6 @@ class SocketOptions {
 
     if (recvSynchronous != null) {
       _setSockOptBool(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_RCVSYN,
         recvSynchronous!,
       );
@@ -136,21 +145,17 @@ class SocketOptions {
 
     if (sendSynchronous != null) {
       _setSockOptBool(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_SNDSYN,
         sendSynchronous!,
       );
     }
 
     if (sender != null) {
-      _setSockOptBool(socketHandle, bindings, SRT_SOCKOPT.SRTO_SENDER, sender!);
+      _setSockOptBool(SRT_SOCKOPT.SRTO_SENDER, sender!);
     }
 
     if (sendTimeout != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_SNDTIMEO,
         sendTimeout!,
       );
@@ -158,8 +163,6 @@ class SocketOptions {
 
     if (recvTimeout != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_RCVTIMEO,
         recvTimeout!,
       );
@@ -167,8 +170,6 @@ class SocketOptions {
 
     if (reuseAddr != null) {
       _setSockOptBool(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_REUSEADDR,
         reuseAddr!,
       );
@@ -176,8 +177,6 @@ class SocketOptions {
 
     if (maxBandwidth != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_MAXBW,
         maxBandwidth!,
       );
@@ -185,8 +184,6 @@ class SocketOptions {
 
     if (inputBandwidth != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_INPUTBW,
         inputBandwidth!,
       );
@@ -194,8 +191,6 @@ class SocketOptions {
 
     if (overheadRoom != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_OHEADBW,
         overheadRoom!,
       );
@@ -203,8 +198,6 @@ class SocketOptions {
 
     if (encryptionKeyLength != null) {
       _setSockOpt(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_PBKEYLEN,
         encryptionKeyLength!,
       );
@@ -212,8 +205,6 @@ class SocketOptions {
 
     if (encryptionPassphrase != null) {
       _setSockOptString(
-        socketHandle,
-        bindings,
         SRT_SOCKOPT.SRTO_PASSPHRASE,
         encryptionPassphrase!,
       );
@@ -222,17 +213,14 @@ class SocketOptions {
 
   /// Internal: Set integer socket option
   void _setSockOpt(
-    int socketHandle,
-    srt_dart_bindings bindings,
     SRT_SOCKOPT option,
     int value,
   ) {
     final valuePtr = calloc<ffi.Int>();
     try {
       valuePtr.value = value;
-      final result = bindings.srt_setsockopt(
-        socketHandle,
-        0,
+      final result = Srt.bindings.srt_setsockflag(
+        _socketHandle,
         option,
         valuePtr.cast<ffi.Void>(),
         ffi.sizeOf<ffi.Int>(),
@@ -245,17 +233,14 @@ class SocketOptions {
 
   /// Internal: Set boolean socket option
   void _setSockOptBool(
-    int socketHandle,
-    srt_dart_bindings bindings,
     SRT_SOCKOPT option,
     bool value,
   ) {
     final valuePtr = calloc<ffi.Int>();
     try {
       valuePtr.value = value ? 1 : 0;
-      final result = bindings.srt_setsockopt(
-        socketHandle,
-        0,
+      final result = Srt.bindings.srt_setsockflag(
+        _socketHandle,
         option,
         valuePtr.cast<ffi.Void>(),
         ffi.sizeOf<ffi.Int>(),
@@ -268,16 +253,13 @@ class SocketOptions {
 
   /// Internal: Set string socket option (for passphrase, etc)
   void _setSockOptString(
-    int socketHandle,
-    srt_dart_bindings bindings,
     SRT_SOCKOPT option,
     String value,
   ) {
     final valuePtr = value.toNativeUtf8();
     try {
-      final result = bindings.srt_setsockopt(
-        socketHandle,
-        0,
+      final result = Srt.bindings.srt_setsockflag(
+        _socketHandle,
         option,
         valuePtr.cast<ffi.Void>(),
         value.length,
