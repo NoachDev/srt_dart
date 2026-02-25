@@ -95,6 +95,9 @@ class SrtMessage {
   /// The number of bytes actually received
   final int bytesReceived;
 
+  /// The time where the menssage is received ( the SrtMessage is created )
+  final DateTime timestamp;
+
   /// Get the message payload as a UTF-8 string
   String get text => String.fromCharCodes(payload);
 
@@ -103,7 +106,7 @@ class SrtMessage {
     required this.payload,
     required this.control,
     required this.bytesReceived,
-  });
+  }) : timestamp = DateTime.now();
 
   @override
   String toString() {

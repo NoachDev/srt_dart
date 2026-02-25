@@ -9,7 +9,7 @@ The current library consumes the raw code and provides a Dart-like interface wit
 ### In a Dart environment
 The `libsrt` package is required if you want to use the `srt_dart` with pure Dart. Follow the SRT [Build Documentation](https://github.com/Haivision/srt/tree/master/docs#build-instructions) for more details.
 
-In Flutter apps this step is unnecessary. And, enusure to have the srt_flutter_libs in your pubspec.yaml
+**On Flutter apps this step is unnecessary**. But, enussure to have the srt_flutter_libs in your pubspec.yaml
 
 #### For Linux / Brew
 ```bash
@@ -28,7 +28,7 @@ You can crete multiply sockets, such that needed call dispose on fineshed the ma
 
 On necessary, the Epoll class can manage **100+** sockets
 
-Built on the UDP protocol, the transport is done using a server/client model. Both side can send data ( id sender is defined true ) but one need listen for a connection (server) and other try connect (client).
+Built on the UDP protocol, the transport is done using a server/client model. Both side can send data ( if sender is defined true ) but one need listen for a connection (server) and other try connect (client).
 
 ### Configuring the SRT in the Head of project (server/client)
 ```dart
@@ -72,17 +72,15 @@ clientSocket.sendStrem(Uint8List.fromList(text.codeUnits)); /// send the data to
 ```
 
 ### On end, close the SRT.
-On Flutter this step not is necessary
+**On Flutter apps this step is unnecessary**
 
 ```dart
-void doThisOnEnd(){
-  Srt.cleanUp();
-}
+Srt.cleanUp();
 ```
 
 ---
 
 For more examples
  - see the path `example/...` 
- - A real, flutter, aplication in the [laughing-dollop repsitory](https://github.com/NoachDev/laughing-dollop)
+ - A real, flutter application at [laughing-dollop](https://github.com/NoachDev/laughing-dollop) repository
 
