@@ -225,7 +225,7 @@ class SocketOptions {
         valuePtr.cast<ffi.Void>(),
         ffi.sizeOf<ffi.Int>(),
       );
-      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})');
+      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})', handle : _socketHandle);
     } finally {
       calloc.free(valuePtr);
     }
@@ -245,7 +245,7 @@ class SocketOptions {
         valuePtr.cast<ffi.Void>(),
         ffi.sizeOf<ffi.Int>(),
       );
-      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})');
+      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})', handle : _socketHandle);
     } finally {
       calloc.free(valuePtr);
     }
@@ -264,7 +264,7 @@ class SocketOptions {
         valuePtr.cast<ffi.Void>(),
         value.length,
       );
-      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})');
+      checkSrtResult(result, operation: 'srt_setsockopt(${option.name})', handle : _socketHandle);
     } finally {
       calloc.free(valuePtr);
     }

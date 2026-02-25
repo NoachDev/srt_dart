@@ -1,5 +1,6 @@
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/main.dart';
+import 'package:srt_dart/src/srt_socket.dart';
 
 /// Exception raised when an SRT operation fails.
 ///
@@ -33,10 +34,20 @@ class SrtException implements Exception {
 ///
 /// SRT functions typically return -1 on error. This function wraps the check
 /// and throws an [SrtException] if an error occurred.
-int checkSrtResult(int result, {required String operation, nonexpected = -1}) {
+void checkSrtResult(int result, {required String operation , nonexpected = -1 , int? handle }) {
   if (result == nonexpected) {
     print('Error during $operation');
+
+    if(handle != null){
+      final socket = SrtSocket.fromHandle(handle);
+      print("Socket data :");
+      print("\t status : ${socket.status}");
+      
+      if (!operation.contains("name")){
+        print("\t peer : ${socket.getRemoteAddress()}");
+      }
+    }
+    
     throw SrtException.fromLastError();
   }
-  return result;
 }

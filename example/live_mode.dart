@@ -54,8 +54,8 @@ void main() async {
   
   // clientSocket.sendStream(Uint8List.fromList(payload.codeUnits);
   clientSocket.sendStream(Uint8List.fromList([...fistsBytes, ...middleBytes, ...lestsBytes]), chunked: true);
-  final receivedMessage = handle.recvStream();
-  final receivedMessage2 = handle.recvStream();
+  final receivedMessage = handle.recvStream(-1);
+  final receivedMessage2 = handle.recvStream(-1);
 
   print('   Received message: ${String.fromCharCodes(receivedMessage)}');
   print('   Received message: ${String.fromCharCodes(receivedMessage2)}\n');
