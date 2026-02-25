@@ -278,7 +278,9 @@ class SrtSocket {
   }
 
   /// Internal: Create from an existing socket handle (for accept())
-  SrtSocket.fromHandle(int handle) : _socketHandle = handle;
+  SrtSocket.fromHandle(int handle)
+    : _socketHandle = handle,
+      options = SocketOptions();
 
   /// Check if socket is closed, throw if it is
   void _checkNotClosed() {
@@ -762,26 +764,30 @@ class SrtSocket {
 
     final exitPort = ReceivePort();
 
-    waitIsloate = await Isolate.spawn((SendPort sendPort) {
-      while (!isClosed) {
-        try {
-          // Future.delayed(
-          //   Duration(milliseconds: timeoutMs),
-          // ).timeout(Duration(milliseconds: timeoutMs));
-          final data = recvStream(bufferSize: bufferSize);
+    waitIsloate = await Isolate.spawn(
+      (SendPort sendPort) {
+        while (!isClosed) {
+          try {
+            // Future.delayed(
+            //   Duration(milliseconds: timeoutMs),
+            // ).timeout(Duration(milliseconds: timeoutMs));
+            final data = recvStream(bufferSize: bufferSize);
 
-          if (data.isNotEmpty) {
-            onReceive(data);
-          }
-        } catch (e) {
-          // Break on socket closed or error
-          if (_isClosed || e is SrtException || e is TimeoutException) {
-            rethrow;
+            if (data.isNotEmpty) {
+              onReceive(data);
+            }
+          } catch (e) {
+            // Break on socket closed or error
+            if (_isClosed || e is SrtException || e is TimeoutException) {
+              rethrow;
+            }
           }
         }
-      }
-      sendPort.send("waitStream Finished");
-    }, exitPort.sendPort, debugName: "Isolate from waitStream in socket $_socketHandle");
+        sendPort.send("waitStream Finished");
+      },
+      exitPort.sendPort,
+      debugName: "Isolate from waitStream in socket $_socketHandle",
+    );
 
     await exitPort.first;
 
