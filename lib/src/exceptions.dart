@@ -1,6 +1,7 @@
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/main.dart';
 import 'package:srt_dart/src/srt_socket.dart';
+import 'package:srt_dart/srt_dart.dart';
 
 /// Exception raised when an SRT operation fails.
 ///
@@ -42,8 +43,7 @@ void checkSrtResult(int result, {required String operation , nonexpected = -1 , 
       final socket = SrtSocket.fromHandle(handle);
       print("Socket data :");
       print("\t status : ${socket.status}");
-      
-      if (!operation.contains("name")){
+      if (!operation.contains("name") && socket.status == SRT_SOCKSTATUS.SRTS_CONNECTED){
         print("\t peer : ${socket.getRemoteAddress()}");
       }
     }

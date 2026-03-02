@@ -19,7 +19,7 @@ void main() {
       server.bind(InternetAddress.loopbackIPv4, 9000);
       server.listen(backlog: 1);
       client.connect(InternetAddress.loopbackIPv4, 9000);
-      final fhandle = await server.accept();
+      final fhandle = await server.accept;
 
       final serverLocal = server.getLocalAddress();
       final clientRemote = client.getRemoteAddress();
@@ -51,7 +51,7 @@ void main() {
       server.bind(InternetAddress.loopbackIPv6, 6000);
       server.listen(backlog: 1);
       client.connect(InternetAddress.loopbackIPv6, 6000);
-      final fhandle = await server.accept();
+      final fhandle = await server.accept;
 
       final serverLocal = server.getLocalAddress();
       final clientRemote = client.getRemoteAddress();
@@ -97,7 +97,7 @@ void main() {
       print(server.status);
       print(client.status);
 
-      final fhandle = await server.accept();
+      final fhandle = await server.accept;
 
       print("after accept");
       print(server.status);
@@ -131,7 +131,7 @@ void main() {
       print(server.status);
       print(client.status);
 
-      final fhandle = await server.accept();
+      final fhandle = await server.accept;
 
       print("after accept");
       print(server.status);
@@ -170,7 +170,7 @@ void main() {
       print(server.status);
       print(client.status);
 
-      final fhandle = await server.accept();
+      final fhandle = await server.accept;
 
       print("after accept");
       print(server.status);

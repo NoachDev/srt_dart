@@ -6,7 +6,7 @@ import 'package:srt_dart/srt_dart.dart';
 /// Example demonstrating the Foundation & Core Wrapper functionality
 /// 
 void main() async {
-  print('=== SRT Dart : Chunked mode ===\n');
+  print('=== SRT Dart : Chunked mode + Epoll ===\n');
 
   // Initialize the SRT library (required first step)
   print('1. Initializing SRT library...');
@@ -35,33 +35,34 @@ void main() async {
   print('   ✓ Server listening\n');
 
   // Attempt client connection
-  print('6. Client attempting connection to 127.0.0.1:9000...');
+  print('5. Connect and accept.');
   clientSocket.connect(InternetAddress.loopbackIPv4, 9000);
-  print('   ✓ Client connected');
-  handle = await serverSocket.accept();
+  print('   ✓ Client will connect');
+
+  handle = await serverSocket.accept;
   print('   ✓ Server accepted connection\n');
 
   print('   Client Status: ${clientSocket.status.name}');
   print('   Server Status: ${serverSocket.status.name}\n');
 
-  print('7. Send and Receive data...');
+  print('6. Send and Receive data...');
   final firstPayload = "A new menssage are incoming";
-  final lastPayload = "Hello World";
+  final lastPayload = "Use the menssage Api";
 
   final fistsBytes = firstPayload.codeUnits;
   final lestsBytes = lastPayload.codeUnits;
   final middleBytes = List.generate(1316 - firstPayload.codeUnits.length, (elm) => 0);
   
-  // clientSocket.sendStream(Uint8List.fromList(payload.codeUnits);
   clientSocket.sendStream(Uint8List.fromList([...fistsBytes, ...middleBytes, ...lestsBytes]), chunked: true);
-  final receivedMessage = handle.recvStream(-1);
-  final receivedMessage2 = handle.recvStream(-1);
+
+  final receivedMessage = await handle.recvStream;
+  final receivedMessage2 = await handle.recvStream;
 
   print('   Received message: ${String.fromCharCodes(receivedMessage)}');
   print('   Received message: ${String.fromCharCodes(receivedMessage2)}\n');
 
   // Cleanup
-  print('8. Cleaning up resources...');
+  print('7. Cleaning up resources...');
   clientSocket.dispose();
   print('   ✓ Client socket closed');
   serverSocket.dispose();

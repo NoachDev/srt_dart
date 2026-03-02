@@ -37,7 +37,7 @@ void main() async {
   print('6. Client attempting connection to 127.0.0.1:9000...');
   menssageClientSocket.connect(InternetAddress.loopbackIPv4, 9000);
   print('   ✓ Client connected');
-  fhandle = await menssageServerSocket.accept();
+  fhandle = await menssageServerSocket.accept;
   print('   ✓ Server accepted connection');
   print('   Client Status: ${menssageClientSocket.status.name}');
   print('   Server Status: ${menssageServerSocket.status.name}\n');
@@ -57,13 +57,13 @@ void main() async {
   print('     - In-order: true (forces message arrival order)\n');
 
   print("8. Message received in server");
-  final receivedMessage = fhandle.recvMessage();
+  final receivedMessage = await fhandle.recvMenssage;
   print('   Received message: ${receivedMessage.text}');
   print('   Metadata: ${receivedMessage.control}\n');
 
   print("9. The server will resend the message to confirm with the client");
   fhandle.sendMessage(receivedMessage.text, control: MessageControl(inOrder: true, ttl: 5000));
-  final therc = menssageClientSocket.recvMessage();
+  final therc = await menssageClientSocket.recvMenssage;
   print('   The menssage received in the server is iqual the client : ${receivedMessage.text == therc.text}\n');
 
   // Cleanup

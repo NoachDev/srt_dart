@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:srt_dart/srt_dart.dart';
-import 'dart:isolate';
 
 /// Example demonstrating the File Transfer mode & Statistics
 ///
@@ -16,7 +15,7 @@ void main() async {
   // Initialize the SRT library
   print('1. Initializing SRT library...');
   Srt();
-  print('   ✓ SRT library initialized\n');
+  print('\t✓ SRT library initialized\n');
 
   // Create file mode sockets
   print('2. Creating file mode sockets...');
@@ -25,30 +24,48 @@ void main() async {
 
   final receiverOptions = SocketOptions.fileMode(sender: false);
   final receiverSocket = SrtSocket(options: receiverOptions);
-  print('   ✓ File mode sockets created\n');
+  print('\t✓ File mode sockets created\n');
 
   // Setup server
   print('3. Setup ...');
   receiverSocket.bind(InternetAddress.loopbackIPv4, 9200);
   receiverSocket.listen(backlog: 1);
-  print('   ✓ Server bound to 127.0.0.1:9200');
+  print('\t✓ Server bound to 127.0.0.1:9200');
 
   senderSocket.connect(InternetAddress.loopbackIPv4, 9200);
-  final fileHandle = await receiverSocket.accept();
-  print('   ✓ Server setup complete\n');
+  final fileHandle = await receiverSocket.accept;
+  print('\t✓ Server setup complete\n');
 
-  print('4. Starting file transfer in Isolate prcesses ...\n');
-  final receiverPort = ReceivePort();
-  final senderPort = ReceivePort();
+  print("4. Send the file file/a_cut_cat.png ...\n");
+  final sendfile = senderSocket.sendFile(FileOptions(path: "example/file/a_cut_cat.png"));
 
-  await Isolate.spawn((port) => _receiverTask(fileHandle, port), receiverPort.sendPort);
-  await Isolate.spawn((port) => _senderTask(senderSocket, port), senderPort.sendPort);
+  print(
+    "5. Receive the file in the temp directory ...",
+  );
+  print('\t5.1 Remove a older file in the temp directory ...');
 
-  await receiverPort.first;
-  await senderPort.first;
-  
+  final tempDir = Directory.systemTemp;
+  final sampleFile = File('${tempDir.path}/sample_transfer.png');
+
+  if (sampleFile.existsSync()) {
+    sampleFile.deleteSync();
+  }
+
+  print('\t\t✓ Temp directory cleaned');
+
+  print('\t5.2 (receiver) Receive the file ...\n');
+
+  /// in a real word application this size should be known through metadata exchange such like recvStream and sendStream
+  final recvfile = fileHandle.recvFile(
+    FileOptions(path: sampleFile.path, size: 4202339),
+  );
+
+  await Future.wait([sendfile, recvfile]);
+
+  print('\t✓ File written successfully in ${sampleFile.path}\n');
+
   // Cleanup
-  print('5. Cleaning up resources...');
+  print('6. Cleaning up resources...');
   senderSocket.dispose();
   print('   ✓ Sender socket closed');
   receiverSocket.dispose();
@@ -57,68 +74,4 @@ void main() async {
   print('   ✓ File handle closed');
   Srt.cleanUp();
   print('   ✓ SRT library cleaned up\n');
-}
-
-void _receiverTask(SrtSocket socket, SendPort port) async {
-  print('4.1 (receiver) Clean the temp directory ...');
-  
-  final tempDir = Directory.systemTemp;
-  final sampleFile = File('${tempDir.path}/sample_transfer.png');
-  
-  if (sampleFile.existsSync()) {
-    sampleFile.deleteSync();
-  }
-
-  print('   ✓ Temp directory cleaned\n');
-
-  print('4.2 (receiver) Receive the file ...');
-  
-  // in real word this size should be known through metadata exchange such like recvStream and sendStream
-  socket.recvFile(sampleFile.path, size: 4202339);
-
-  if (sampleFile.existsSync()) {
-    final fileSize = sampleFile.lengthSync();
-    print('\n   ✓ File written successfully: $fileSize bytes\n');
-  }
-
-  // socket.dispose();
-
-  port.send(null);
-
-}
-
-void _senderTask(SrtSocket socket, SendPort port) async {
-  await Future.delayed(Duration(microseconds: 100)); // Ensure sender is ready
-
-  print('4.1 (sender) Get the file to send ...');
-
-  final sourceFile = File('example/file/a_cut_cat.png');
-  if (!sourceFile.existsSync()) {
-    print('   ✗ Source file not found: ${sourceFile.path}');
-    return;
-  }
-  
-  print('   ✓ Source file found: ${sourceFile.path}\n');
-
-  // print("4.2 (sender) Send Metadata...");
-  
-  socket.sendFile('example/file/a_cut_cat.png');
-  
-  final fileByte = File('example/file/a_cut_cat.png').lengthSync();
-  
-  while (true) {
-    final stats = socket.getStats();
-    final percent = stats.byteSentUniqueTotal / fileByte * 100;
-    stdout.write('\r Client Progress: ${percent.toStringAsFixed(2)}%');
-    
-    if (percent >= 100.0) {
-      break;
-    }
-    
-    sleep(Duration(milliseconds: 100));
-  }
-  print("");
-
-  port.send(null);
-  
 }
