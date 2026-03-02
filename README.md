@@ -55,9 +55,8 @@ final serverSocket = SrtSocket(options: SocketOptions.liveMode(sender: false)) /
 serverSocket.bind(InternetAddress.loopbackIPv4, 9000); /// set the ip (127.0.0.1) and port of the server will listen
 serverSocket.listen(backlog: 1); /// listen for clients
 final handle = serverSocket.accept(); /// accpet one client, and get one socket to manage this connection 
-handle.waitStream(onReceive : (data){
-  print(data.lenght);
-});
+final receivedData = await handle.recvStream; /// this receiving not have a timeout, for a more refined aprouch use the epoll for a continuos strem (see Example/live_mode)
+print(receivedData.lenght) /// The lenght of received data
 ```
 
 ### Configure a Client
