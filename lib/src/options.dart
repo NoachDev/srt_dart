@@ -1,4 +1,5 @@
 import 'dart:ffi' as ffi;
+import 'dart:io';
 import 'dart:math';
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
@@ -23,25 +24,24 @@ class SocketOptions {
   /// When true, buffer is treated as one message (applies to srt_sendmsg/srt_recvmsg)
   bool? messageApi;
 
-  /// SRTO_RCVSYN: Receive in Synchronous Mode
-  /// When true, srt_recv() will block until full buffer is received
-  bool? recvSynchronous;
-
-  /// SRTO_SNDSYN: Send in Synchronous Mode
-  /// When true, srt_send() will block until the buffer is accepted by the transport layer
-  bool? sendSynchronous;
-
   /// SRTO_SENDER: Set socket as sender
   /// When true, socket acts as a LIVE sender
   bool? sender;
 
   /// SRTO_SNDTIMEO: Send timeout (milliseconds)
-  /// Timeout for blocking send operations (-1 = blocking indefinitely)
+  /// Timeout for blocking send operations (null = blocking indefinitely)
   int? sendTimeout;
 
   /// SRTO_RCVTIMEO: Receive timeout (milliseconds)
-  /// Timeout for blocking receive operations (-1 = blocking indefinitely)
-  int? recvTimeout;
+  /// Timeout for blocking receive operations (null = blocking indefinitely)
+  int? recvTimeout = 100;
+
+  /// SRTO_CONNTIMEO: Receive timeout (milliseconds)
+  /// Timeout for blocking connect operations (null = blocking indefinitely)
+  int? connectTimeout = 100;
+
+  /// Timeout for blocking accept operations (null = blocking indefinitely)
+  int? acceptTimeout = 100;
 
   /// SRTO_REUSEADDR: Allow reuse of local address in TIME_WAIT state
   bool? reuseAddr;
@@ -76,8 +76,6 @@ class SocketOptions {
     this.mss,
     this.transType,
     this.messageApi,
-    this.recvSynchronous,
-    this.sendSynchronous,
     this.sender,
     this.sendTimeout,
     this.recvTimeout,
@@ -136,20 +134,6 @@ class SocketOptions {
       );
     }
 
-    if (recvSynchronous != null) {
-      _setSockOptBool(
-        SRT_SOCKOPT.SRTO_RCVSYN,
-        recvSynchronous!,
-      );
-    }
-
-    if (sendSynchronous != null) {
-      _setSockOptBool(
-        SRT_SOCKOPT.SRTO_SNDSYN,
-        sendSynchronous!,
-      );
-    }
-
     if (sender != null) {
       _setSockOptBool(SRT_SOCKOPT.SRTO_SENDER, sender!);
     }
@@ -165,6 +149,13 @@ class SocketOptions {
       _setSockOpt(
         SRT_SOCKOPT.SRTO_RCVTIMEO,
         recvTimeout!,
+      );
+    }
+    
+    if (connectTimeout != null) {
+      _setSockOpt(
+        SRT_SOCKOPT.SRTO_CONNTIMEO,
+        connectTimeout!,
       );
     }
 
@@ -268,5 +259,70 @@ class SocketOptions {
     } finally {
       calloc.free(valuePtr);
     }
+  }
+}
+
+/// Configuartions for receiving or sending a file.
+///
+/// [path] is the path where the file will be saved
+/// [offset] is the file offset to start writing at (default 0)
+/// [size] is the number of bytes to receive
+/// [blockSize] is the write block size in bytes (default 262144 = 256KB)
+/// 
+class FileOptions {
+  final String path;
+  final int offset;
+  final int blockSize;
+
+  int? size;
+
+  late ffi.Pointer<Utf8> pathPtr;
+
+  // Offset needs to be a pointer to Int64
+  final offsetPtr = calloc<ffi.Int64>();
+
+  FileOptions({
+    required this.path,
+    this.size,
+    this.offset = 0,
+    this.blockSize = 262144,
+  }) : pathPtr = path.toNativeUtf8(); // Convert path to native string
+
+  Future<void> start() async{
+    try {
+      await _checkOptions();
+      offsetPtr.value = offset;
+    } catch (e) {
+      clean();
+      rethrow;
+    }
+  }
+
+  Future<void> _checkOptions() async {
+    // Verify if the parent directory exists
+    final file = File(path);
+    final parent = file.parent;
+    if (!await parent.exists()) {
+      throw ArgumentError('Parent directory does not exist: ${parent.path}');
+    }
+
+    if (offset < 0) {
+      throw ArgumentError('Offset must be non-negative, got $offset');
+    }
+
+    if (blockSize <= 0) {
+      throw ArgumentError('Block size must be positive, got $blockSize');
+    }
+    
+    size ??= await file.length();
+
+    if (size! <= 0) {
+      throw ArgumentError('Size must be positive, got $size');
+    }
+  }
+
+  void clean() {
+    calloc.free(pathPtr);
+    calloc.free(offsetPtr);
   }
 }
