@@ -5,6 +5,15 @@ import 'package:srt_dart/srt_dart.dart';
 
 /// Example demonstrating the Foundation & Core Wrapper functionality
 /// 
+/// In this example is created two sockets, one to receive data [serverSocket], and one to send data [clientSocket].
+///
+/// After the main partices (steps 1,2,3,4,5,7), of you can learnig more in [example/foundation] or in [README]
+/// 
+/// On step 6.
+/// A data with two Strings [firstPayload], [lastPayload], and a "empety" list with 1289 zeros is sended - this overflow the UDP package capacity forcing the chunked mode be executed.
+/// 
+/// After send the data, the [waitAsStream] of epoll will notify when has a icoming data, and print them with the custumized menssage.
+///  
 void main() async {
   print('=== SRT Dart : Chunked mode + Epoll ===\n');
 
@@ -45,7 +54,11 @@ void main() async {
   print('   Client Status: ${clientSocket.status.name}');
   print('   Server Status: ${serverSocket.status.name}\n');
 
-  print('6. Send and Receive data...');
+  print('6. Send and Receive data and Using the Epoll for know when are incoming...');
+
+  final epoll = SrtEpoll();
+  epoll.register(handle, events: [EpollEventType.read]);
+
   final firstPayload = "A new menssage are incoming";
   final lastPayload = "Use the menssage Api";
 
@@ -55,14 +68,13 @@ void main() async {
   
   clientSocket.sendStream(Uint8List.fromList([...fistsBytes, ...middleBytes, ...lestsBytes]), chunked: true);
 
-  final receivedMessage = await handle.recvStream;
-  final receivedMessage2 = await handle.recvStream;
-
-  print('   Received message: ${String.fromCharCodes(receivedMessage)}');
-  print('   Received message: ${String.fromCharCodes(receivedMessage2)}\n');
+  await for (final event in epoll.waitAsStream()){
+    final receivedMessage = await handle.recvStream;
+    print('Received message: ${String.fromCharCodes(receivedMessage)}');
+  }
 
   // Cleanup
-  print('7. Cleaning up resources...');
+  print('\n7. Cleaning up resources...');
   clientSocket.dispose();
   print('   ✓ Client socket closed');
   serverSocket.dispose();

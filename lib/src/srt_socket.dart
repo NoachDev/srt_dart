@@ -97,7 +97,7 @@ class SrtSocket {
   Future<Uint8List> get recvStream async {
     _checkNotClosed();
 
-    final SrtMessage data = await asyncControl!.runInIsolate("recvMenssage");
+    final SrtMessage data = await asyncControl!.runInIsolate("recvMessage");
     return data.payload;
   }
 
@@ -113,7 +113,7 @@ class SrtSocket {
   ///
   /// Throws [SrtException] if receiving fails
   ///
-  Future<SrtMessage> get recvMenssage async {
+  Future<SrtMessage> get recvMessage async {
     _checkNotClosed();
 
     return await asyncControl!.runInIsolate("recvMenssage");
@@ -568,7 +568,7 @@ class SrtSocket {
     }
   }
 
-  SrtMessage _recvMenssageMethod({int bufferSize = 1500}) {
+  SrtMessage _recvMessageMethod({int bufferSize = 1500}) {
     final buffer = calloc<ffi.Char>(bufferSize);
     final mctrl = calloc<SRT_MSGCTRL>();
 
@@ -639,15 +639,15 @@ class SocketThread extends ThreadMananger {
 
   SocketThread(this.socket) {
     masks['Accept'] = IsolateInfo(
-      unique: true,
+      unique: false,
       menssage: "You are already accepting incoming connections",
       action: socket._acceptMethod,
       // timeOut: socket.options?.acceptTimeout,
     );
-    masks['recvMenssage'] = IsolateInfo(
+    masks['recvMessage'] = IsolateInfo(
       unique: true,
       menssage: "You already waiting for data",
-      action: socket._recvMenssageMethod,
+      action: socket._recvMessageMethod,
     );
     masks['recvFile'] = IsolateInfo(
       unique: true,

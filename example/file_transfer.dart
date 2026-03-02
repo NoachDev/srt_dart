@@ -3,12 +3,14 @@ import 'package:srt_dart/srt_dart.dart';
 
 /// Example demonstrating the File Transfer mode & Statistics
 ///
-/// This example shows:
-/// 1. File mode socket configuration
-/// 2. File transfer operations (sendFile/recvFile)
-/// 3. Statistics collection and monitoring
-/// 4. Address information retrieval
-/// 5. Transfer progress tracking
+/// In this example is created two sockets, one to receive data [receiverSocket], and one to send data [senderSocket].
+/// 
+/// After the main partices (steps 1,2,3 and 6), of you can learnig more in [example/foundation] or in [README]
+///
+/// On step 4, a file located in the folder [file] is sended to the [receiverSocket]
+/// 
+/// On step 5, the file sended from [senderSocket] is storaged in the temp directory, for that he is clened ( a possible preview file [sample_transfer] is deleted ).
+/// 
 void main() async {
   print('=== SRT Dart : File Transfer & Statistics Demo ===\n');
 

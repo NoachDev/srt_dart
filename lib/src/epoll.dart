@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
@@ -163,7 +164,7 @@ class SrtEpoll {
   /// ```
   ///
   /// Throws [SrtException] if the wait operation fails
-  Future<List<EpollEvent>> waitAsync(int timeoutMs, { int maxEvents = 1000}) async {
+  Future<List<EpollEvent>> waitAsync(int timeoutMs, { int maxEvents = 10, errorsIsCritical = true}) async {
     _checkNotClosed();
 
     // Allocate arrays for read/write events
@@ -189,6 +190,10 @@ class SrtEpoll {
         ffi.nullptr.cast<SYSSOCKET>(),
         ffi.nullptr.cast<ffi.Int>(),
       );
+
+      if (!errorsIsCritical && result == -1) {
+        return [];
+      }
 
       checkSrtResult(result, operation: 'srt_epoll_wait');
 
@@ -252,16 +257,20 @@ class SrtEpoll {
   /// }
   /// ```
   ///
-  /// The stream continues indefinitely until the epoll is disposed.
+  /// The stream continues indefinitely until the epoll is disposed or a timout error ( if [timeoutIsCritical] ).
   /// To stop the stream, call [dispose].
   ///
   /// Throws [SrtException] if wait operations fail
-  Stream<EpollEvent> waitAsStream({int timeoutMs = 1000}) async* {
+  /// 
+  Stream<EpollEvent> waitAsStream({int timeoutMs = 1000, timeoutIsCritical = true}) async* {
     while (!_isClosed) {
       try {
-        final events = await waitAsync(timeoutMs);
+        final events = await waitAsync(timeoutMs, errorsIsCritical: false);
         for (final event in events) {
           yield event;
+        }
+        if (events.isEmpty && timeoutIsCritical) {
+          break;
         }
       } catch (e) {
         if (_isClosed) {
