@@ -116,7 +116,7 @@ class SrtSocket {
   Future<SrtMessage> get recvMessage async {
     _checkNotClosed();
 
-    return await asyncControl!.runInIsolate("recvMenssage");
+    return await asyncControl!.runInIsolate("recvMessage");
   }
 
   /// Create a new SRT socket
