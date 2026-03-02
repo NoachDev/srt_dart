@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
-import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
+import 'package:srt_dart/src/async.dart';
 import 'package:srt_dart/src/bindings/srt_bindings.dart';
 import 'dart:io';
 import 'package:srt_dart/src/options.dart';
@@ -48,6 +48,11 @@ class SrtSocket {
   /// Whether this socket has been closed
   bool _isClosed = false;
 
+  /// Options of the socket.
+  SocketOptions? options;
+  
+  SocketThread? asyncControl;
+
   /// Get the socket handle
   int get socketHandle => _socketHandle;
 
@@ -60,14 +65,59 @@ class SrtSocket {
   /// Check if this socket is currently closed
   bool get isClosed => _isClosed;
 
-  /// The current Isolate of an accept method
-  Isolate? acceptIsloate;
+  /// Accept an incoming connection on this socket
+  ///
+  /// * Must call [listen] before [accept]
+  ///
+  /// * Ensure the dispose will called or has an incoming connection. Otherwise, the program will crash.
+  ///
+  /// Returns a new [SrtSocket] representing the connected client.
+  ///
+  /// Throws [SrtException] if accept fails
+  ///
+  Future<SrtSocket> get accept async {
+    _checkNotClosed();
 
-  /// The current Isolate of an wait method (Stream)
-  Isolate? waitIsloate;
+    final data = await asyncControl!.runInIsolate("Accept");
+    return SrtSocket.fromHandle(data);
+  }
 
-  /// Options of the socket.
-  SocketOptions? options;
+  /// Receive data from this socket in stream mode
+  ///
+  /// This wraps the native [srt_recv/srt_recvmsg] function and is suitable for
+  /// continuous data reception. The data is read from a native buffer
+  /// and converted to a Dart [Uint8List].
+  ///
+  /// Returns a [Uint8List] containing the received data. May be empty if
+  /// the receive timeout expired. Returns fewer bytes than [bufferSize] if
+  /// less data is available.
+  ///
+  /// Throws [SrtException] if receiving fails
+  ///
+  Future<Uint8List> get recvStream async {
+    _checkNotClosed();
+
+    final SrtMessage data = await asyncControl!.runInIsolate("recvMenssage");
+    return data.payload;
+  }
+
+  /// Receive a message from this socket
+  ///
+  /// This wraps the native [srt_recvmsg2] function to receive messages
+  /// in message mode with control information.
+  ///
+  /// [bufferSize] is the maximum number of bytes to receive (default 1500)
+  ///
+  /// Returns an [SrtMessage] containing the payload and metadata.
+  /// Returns a message with empty payload if the receive timeout expired.
+  ///
+  /// Throws [SrtException] if receiving fails
+  ///
+  Future<SrtMessage> get recvMenssage async {
+    _checkNotClosed();
+
+    return await asyncControl!.runInIsolate("recvMenssage");
+  }
 
   /// Create a new SRT socket
   ///
@@ -77,8 +127,11 @@ class SrtSocket {
   /// Throws [SrtException] if socket creation fails
   ///
   SrtSocket({this.options}) : _socketHandle = Srt.bindings.srt_create_socket() {
-    checkSrtResult(_socketHandle, operation: 'create socket instance', handle : _socketHandle);
-
+    checkSrtResult(
+      _socketHandle,
+      operation: 'create socket instance',
+      handle: _socketHandle,
+    );
     Srt.addSocket = this;
 
     // TODO: Register finalizer for automatic dispose
@@ -86,6 +139,8 @@ class SrtSocket {
     options ??= SocketOptions.liveMode();
 
     options!.applyTo(_socketHandle);
+
+    asyncControl = SocketThread(this);
   }
 
   /// Bind this socket to the specified address and port
@@ -107,7 +162,11 @@ class SrtSocket {
           ? ffi.sizeOf<sockaddr_in>()
           : ffi.sizeOf<sockaddr_in6>();
       final result = Srt.bindings.srt_bind(_socketHandle, sockAddr, size);
-      checkSrtResult(result, operation: 'srt_bind(${address.address}:$port)', handle : _socketHandle);
+      checkSrtResult(
+        result,
+        operation: 'srt_bind(${address.address}:$port)',
+        handle: _socketHandle,
+      );
     } finally {
       calloc.free(sockAddr);
     }
@@ -169,63 +228,11 @@ class SrtSocket {
 
   void _listen(int backlog) {
     final result = Srt.bindings.srt_listen(_socketHandle, backlog);
-    checkSrtResult(result, operation: 'srt_listen(backlog=$backlog)', handle : _socketHandle);
-  }
-
-  /// Accept an incoming connection on this socket
-  ///
-  /// * Must call [listen] before [accept]
-  ///
-  /// * Ensure the dispose will called or has an incoming connection. Otherwise, the program will crash.
-  ///
-  /// Returns a new [SrtSocket] representing the connected client.
-  ///
-  /// Throws [SrtException] if accept fails
-  ///
-  Future<SrtSocket> accept() async {
-    _checkNotClosed();
-
-    if (acceptIsloate != null) {
-      throw Exception("You already accepting incoming connections");
-    }
-
-    final addrStorage = calloc<sockaddr_storage>();
-    final addrLen = calloc<ffi.Int>();
-    try {
-      addrLen.value = ffi.sizeOf<sockaddr_storage>();
-
-      final exitPort = ReceivePort();
-
-      /// TODO : Add especific address,
-      /// TODO : Do the Isolte finish the accept
-      ///
-
-      acceptIsloate?.kill(priority: Isolate.immediate);
-
-      acceptIsloate = await Isolate.spawn((send) {
-        send.send(
-          Srt.bindings.srt_accept(
-            _socketHandle,
-            addrStorage.cast<sockaddr>(),
-            addrLen,
-          ),
-        );
-      }, exitPort.sendPort);
-
-      final clientHandle = await exitPort.first as int;
-
-      checkSrtResult(clientHandle, operation: 'accept', handle : _socketHandle);
-
-      exitPort.close();
-
-      acceptIsloate = null;
-
-      // Create new socket wrapper with the accepted connection
-      return SrtSocket.fromHandle(clientHandle);
-    } finally {
-      calloc.free(addrStorage);
-      calloc.free(addrLen);
-    }
+    checkSrtResult(
+      result,
+      operation: 'srt_listen(backlog=$backlog)',
+      handle: _socketHandle,
+    );
   }
 
   /// Connect this socket to a remote InternetAddress
@@ -251,7 +258,7 @@ class SrtSocket {
         checkSrtResult(
           result,
           operation: 'srt_connect(${address.address}:$port)',
-          handle : _socketHandle
+          handle: _socketHandle,
         );
       } finally {
         calloc.free(sockAddr);
@@ -269,8 +276,7 @@ class SrtSocket {
   void dispose() {
     if (_isClosed) return;
 
-    acceptIsloate?.kill(priority: Isolate.immediate);
-    waitIsloate?.kill(priority: Isolate.immediate);
+    asyncControl?.dispose();
 
     final result = Srt.bindings.srt_close(_socketHandle);
     if (result != -1) {
@@ -281,7 +287,9 @@ class SrtSocket {
   /// Internal: Create from an existing socket handle (for accept())
   SrtSocket.fromHandle(int handle)
     : _socketHandle = handle,
-      options = SocketOptions();
+      options = SocketOptions() {
+    asyncControl = SocketThread(this);
+  }
 
   /// Check if socket is closed, throw if it is
   void _checkNotClosed() {
@@ -331,60 +339,11 @@ class SrtSocket {
         bytesSent += sendStream(newData, chunked: true);
       }
 
-      checkSrtResult(bytesSent, operation: "send data", handle : _socketHandle);
+      checkSrtResult(bytesSent, operation: "send data", handle: _socketHandle);
 
       return bytesSent;
     } finally {
       calloc.free(buffer);
-    }
-  }
-
-  /// Receive data from this socket in stream mode
-  ///
-  /// This wraps the native [srt_recv/srt_recvmsg2] function and is suitable for
-  /// continuous data reception. The data is read from a native buffer
-  /// and converted to a Dart [Uint8List].
-  ///
-  /// [timeoutMs] is the maximum time in milliseconds for wating data ( timeoutMs : -1 is a block code)
-  /// [bufferSize] is the maximum number of bytes to receive (default 1500)
-  ///
-  /// Returns a [Uint8List] containing the received data. May be empty if
-  /// the receive timeout expired. Returns fewer bytes than [bufferSize] if
-  /// less data is available.
-  ///
-  /// Throws [SrtException] if receiving fails
-  ///
-  Uint8List recvStream(int timeoutMs, {int bufferSize = 1500}) {
-    _checkNotClosed();
-
-    final buffer = calloc<ffi.Char>(bufferSize);
-    final control = MessageControl(ttl: timeoutMs).toNative();
-
-    try {
-
-      final bytesReceived = Srt.bindings.srt_recvmsg2(
-        _socketHandle,
-        buffer,
-        bufferSize,
-        control
-      );
-
-      checkSrtResult(bytesReceived, operation: "receive data from live mode", handle : _socketHandle);
-
-      if (bytesReceived == 0) {
-        return Uint8List(0);
-      }
-
-      // Convert native buffer to Dart list
-      final result = Uint8List(bytesReceived);
-      for (int i = 0; i < bytesReceived; i++) {
-        result[i] = buffer[i];
-      }
-
-      return result;
-    } finally {
-      calloc.free(buffer);
-      calloc.free(control);
     }
   }
 
@@ -438,122 +397,24 @@ class SrtSocket {
     }
   }
 
-  /// Receive a message from this socket
-  ///
-  /// This wraps the native [srt_recvmsg2] function to receive messages
-  /// in message mode with control information.
-  ///
-  /// [bufferSize] is the maximum number of bytes to receive (default 1500)
-  ///
-  /// Returns an [SrtMessage] containing the payload and metadata.
-  /// Returns a message with empty payload if the receive timeout expired.
-  ///
-  /// Throws [SrtException] if receiving fails
-  ///
-  SrtMessage recvMessage({int bufferSize = 1500}) {
-    _checkNotClosed();
-
-    final buffer = calloc<ffi.Char>(bufferSize);
-    final mctrl = calloc<SRT_MSGCTRL>();
-
-    try {
-      // Initialize message control
-      Srt.bindings.srt_msgctrl_init(mctrl);
-
-      final bytesReceived = Srt.bindings.srt_recvmsg2(
-        _socketHandle,
-        buffer,
-        bufferSize,
-        mctrl,
-      );
-
-      checkSrtResult(bytesReceived, operation: "receive menssage, no bytes received");
-
-      // Convert native buffer to Dart list
-      final payload = bytesReceived > 0
-          ? Uint8List(bytesReceived)
-          : Uint8List(0);
-
-      for (int i = 0; i < bytesReceived; i++) {
-        payload[i] = buffer[i];
-      }
-
-      // Create message control info from native structure
-      final control = MessageControl.fromNative(mctrl.ref);
-
-      return SrtMessage(
-        payload: payload,
-        control: control,
-        bytesReceived: bytesReceived,
-      );
-    } finally {
-      calloc.free(buffer);
-      calloc.free(mctrl);
-    }
-  }
-
   /// Send a file over this socket
   ///
   /// This wraps the native [srt_sendfile] function and efficiently
   /// transmits a file by reading directly from disk without buffering
   /// the entire file in memory.
   ///
-  /// [filePath] is the path to the file to send
-  /// [offset] is the file offset to start reading from (default 0)
-  /// [size] is the number of bytes to send (default 0 = entire file from offset)
-  /// [blockSize] is the read block size in bytes (default 262144 = 256KB)
+  /// Use the FileOptions class to set the path of output and others configuartions.
   ///
-  /// Returns the number of bytes actually sent. The size of a file
-  /// transmission can be much larger than available system buffers,
-  /// so multiple calls may be needed.
+  /// Returns the number of bytes actually sent.
   ///
   /// Throws [SrtException] if the send fails or [ArgumentError] if the file doesn't exist
   ///
-  int sendFile(
-    String filePath, {
-    int offset = 0,
-    int size = 0,
-    int blockSize = 262144,
-  }) {
+  Future<int> sendFile(FileOptions fileOtions) async {
     _checkNotClosed();
-
-    // Verify file exists
-    final file = File(filePath);
-    if (!file.existsSync()) {
-      throw ArgumentError('File not found: $filePath');
-    }
-
-    if (offset < 0) {
-      throw ArgumentError('Offset must be non-negative, got $offset');
-    }
-
-    if (blockSize <= 0) {
-      throw ArgumentError('Block size must be positive, got $blockSize');
-    }
-
-    // Convert file path to native string
-    final pathPtr = filePath.toNativeUtf8();
-    // Offset needs to be a pointer to Int64
-    final offsetPtr = calloc<ffi.Int64>();
-    try {
-      offsetPtr.value = offset;
-      final actualSize = size <= 0 ? -1 : size;
-
-      final bytesSent = Srt.bindings.srt_sendfile(
-        _socketHandle,
-        pathPtr.cast<ffi.Char>(),
-        offsetPtr,
-        actualSize,
-        blockSize,
-      );
-
-      checkSrtResult(bytesSent, operation: "send file, no bytes sended", handle : _socketHandle);
-
-      return bytesSent;
-    } finally {
-      calloc.free(pathPtr);
-      calloc.free(offsetPtr);
-    }
+    
+    await fileOtions.start();
+    final int data = await asyncControl!.runInIsolate("sendFile", arg : fileOtions);
+    return data;
   }
 
   /// Receive a file over this socket
@@ -562,68 +423,21 @@ class SrtSocket {
   /// receives a file by writing directly to disk without buffering
   /// the entire file in memory.
   ///
-  /// [outputPath] is the path where the file will be saved
-  /// [offset] is the file offset to start writing at (default 0)
-  /// [size] is the number of bytes to receive
-  /// [blockSize] is the write block size in bytes (default 262144 = 256KB)
+  /// Use the FileOptions class to set the path of output and others configuartions.
   ///
-  /// Returns the number of bytes actually received. The size of a file
-  /// transmission can be much larger than available system buffers,
-  /// so multiple calls may be needed.
+  /// Returns the number of bytes actually received.
   ///
   /// The output file is created if it doesn't exist. If it exists,
   /// data is appended at the specified offset.
   ///
   /// Throws [SrtException] if the receive fails or if the parent directory doesn't exist
   ///
-  int recvFile(
-    String outputPath, {
-    int offset = 0,
-    int size = 0,
-    int blockSize = 262144,
-  }) {
+  Future<int> recvFile(FileOptions fileOtions) async{
     _checkNotClosed();
 
-    // Verify the parent directory exists
-    final file = File(outputPath);
-    final parent = file.parent;
-    if (!parent.existsSync()) {
-      throw ArgumentError('Parent directory does not exist: ${parent.path}');
-    }
-
-    if (offset < 0) {
-      throw ArgumentError('Offset must be non-negative, got $offset');
-    }
-
-    if (blockSize <= 0) {
-      throw ArgumentError('Block size must be positive, got $blockSize');
-    }
-    if (size <= 0) {
-      throw ArgumentError('Size must be positive, got $size');
-    }
-
-    // Convert path to native string
-    final pathPtr = outputPath.toNativeUtf8();
-    // Offset needs to be a pointer to Int64
-    final offsetPtr = calloc<ffi.Int64>();
-    try {
-      offsetPtr.value = offset;
-
-      final bytesReceived = Srt.bindings.srt_recvfile(
-        _socketHandle,
-        pathPtr.cast<ffi.Char>(),
-        offsetPtr,
-        size,
-        blockSize,
-      );
-
-      checkSrtResult(bytesReceived, operation: "recv file");
-
-      return bytesReceived;
-    } finally {
-      calloc.free(pathPtr);
-      calloc.free(offsetPtr);
-    }
+    await fileOtions.start();
+    final int data = await asyncControl!.runInIsolate("recvFile", arg : fileOtions);
+    return data;
   }
 
   /// Get transmission statistics for this socket
@@ -678,7 +492,11 @@ class SrtSocket {
 
       final result = Srt.bindings.srt_getsockname(_socketHandle, addr, addrLen);
 
-      checkSrtResult(result, operation: "get socket name", handle : _socketHandle);
+      checkSrtResult(
+        result,
+        operation: "get socket name",
+        handle: _socketHandle,
+      );
 
       return SocketInterface(
         SrtAddress.retriveAddress(addr),
@@ -711,7 +529,7 @@ class SrtSocket {
 
       final result = Srt.bindings.srt_getpeername(_socketHandle, addr, addrLen);
 
-      checkSrtResult(result, operation: "get peer name", handle : _socketHandle);
+      checkSrtResult(result, operation: "get peer name", handle: _socketHandle);
 
       return SocketInterface(
         SrtAddress.retriveAddress(addr),
@@ -723,107 +541,124 @@ class SrtSocket {
     }
   }
 
-  /// Receive data from this socket in a continuous stream.
-  ///
-  /// Emite a chunk of received data from a thread.
-  ///
-  /// [bufferSize] is the maximum number of bytes per chunk (default 1500)
-  /// [timeoutMs] is the receive timeout in milliseconds (0 = no timeout)
-  /// [onReceive] is the callback function to handle received data.
-  ///
-  /// The stream can be consumed like this:
-  /// ```dart
-  /// await waitStream(onReceive : (Uint8List data){
-  ///   print('Received: ${String.fromCharCodes(data)}');
-  /// })
-  /// ```
-  ///
-  /// The stream completes when the socket is closed.
-  ///
-  /// Throws [SrtException] if receiving fails
-  ///
-  Future<void> waitStream({
-    int bufferSize = 1500,
-    int timeoutMs = 100,
-    required void Function(Uint8List data) onReceive,
-  }) async {
-    _checkNotClosed();
+  int _acceptMethod() {
+    final addrStorage = calloc<sockaddr_storage>();
+    final addrLen = calloc<ffi.Int>();
+    try {
+      addrLen.value = ffi.sizeOf<sockaddr_storage>();
 
-    if (waitIsloate != null) {
-      throw Exception("You already waiting for data");
+      /// TODO : Add especific address,
+      /// TODO : Do the Isolte finish the accept
+      ///
+
+      final clientHandle = Srt.bindings.srt_accept(
+        _socketHandle,
+        addrStorage.cast<sockaddr>(),
+        addrLen,
+      );
+
+      checkSrtResult(clientHandle, operation: 'accept', handle: _socketHandle);
+
+      return clientHandle;
+
+      // Create new socket wrapper with the accepted connection
+    } finally {
+      calloc.free(addrStorage);
+      calloc.free(addrLen);
     }
+  }
 
-    final exitPort = ReceivePort();
+  SrtMessage _recvMenssageMethod({int bufferSize = 1500}) {
+    final buffer = calloc<ffi.Char>(bufferSize);
+    final mctrl = calloc<SRT_MSGCTRL>();
 
-    waitIsloate = await Isolate.spawn(
-      (SendPort sendPort) {
-        while (!isClosed) {
-          try {
-            final data = recvStream(timeoutMs, bufferSize: bufferSize);
-            if (data.isNotEmpty) {
-              onReceive(data);
-            }
-          } catch (e) {
-            if (isClosed){
-              break;
-            }
+    try {
+      final bytesReceived = Srt.bindings.srt_recvmsg2(
+        _socketHandle,
+        buffer,
+        bufferSize,
+        mctrl,
+      );
 
-            rethrow;
-          }
-        }
-        sendPort.send("waitStream Finished");
-      },
-      exitPort.sendPort,
-      debugName: "Isolate from waitStream in socket $_socketHandle",
+      checkSrtResult(
+        bytesReceived,
+        operation: "receive data from live mode",
+        handle: _socketHandle,
+      );
+
+      final control = MessageControl.fromNative(mctrl.ref);
+
+      final payload = Uint8List(bytesReceived);
+
+      for (int i = 0; i < bytesReceived; i++) {
+        payload[i] = buffer[i];
+      }
+
+      return SrtMessage(
+        payload: payload,
+        control: control,
+        bytesReceived: bytesReceived,
+      );
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  int _recvFileMethod(FileOptions options) {
+    final bytesReceived = Srt.bindings.srt_recvfile(
+      _socketHandle,
+      options.pathPtr.cast<ffi.Char>(),
+      options.offsetPtr,
+      options.size!,
+      options.blockSize,
     );
 
-    await exitPort.first;
+    checkSrtResult(bytesReceived, operation: "receive a file");
+    options.clean();
 
-    exitPort.close();
-
-    waitIsloate = null;
+    return bytesReceived;
   }
+  int _sendFileMethod(FileOptions options) {
+    final bytesReceived = Srt.bindings.srt_sendfile(
+      _socketHandle,
+      options.pathPtr.cast<ffi.Char>(),
+      options.offsetPtr,
+      options.size!,
+      options.blockSize,
+    );
 
-  /// Receive messages from this socket as a Stream
-  ///
-  /// Creates a continuous stream of messages from the socket.
-  /// Each emission contains a single complete message with its metadata.
-  /// This is suitable for message mode transmission.
-  ///
-  /// [bufferSize] is the maximum message size in bytes (default 1500)
-  ///
-  /// The stream can be consumed with Dart's `await for` loops:
-  /// ```dart
-  /// await for (final msg in socket.recvMessageAsStream()) {
-  ///   print('Message: ${msg.payload}');
-  /// }
-  /// ```
-  ///
-  /// The stream completes when the socket is closed.
-  ///
-  /// Throws [SrtException] if receiving fails
-  Stream<SrtMessage> waitMessage({int bufferSize = 1500}) async* {
-    _checkNotClosed();
+    checkSrtResult(bytesReceived, operation: "receive a file");
+    options.clean();
 
-    while (!_isClosed) {
-      try {
-        final message = recvMessage(bufferSize: bufferSize);
-        // Only emit messages with actual payload
-        if (message.bytesReceived > 0) {
-          yield message;
-        }
-
-        // Check if socket is still connected after empty receive
-        if (message.bytesReceived == 0 &&
-            status == SRT_SOCKSTATUS.SRTS_CLOSED) {
-          break;
-        }
-      } catch (e) {
-        // Break on socket closed or error
-        if (_isClosed || e is SrtException) {
-          rethrow;
-        }
-      }
-    }
+    return bytesReceived;
   }
 }
+
+class SocketThread extends ThreadMananger {
+  final SrtSocket socket;
+
+  SocketThread(this.socket) {
+    masks['Accept'] = IsolateInfo(
+      unique: true,
+      menssage: "You are already accepting incoming connections",
+      action: socket._acceptMethod,
+      // timeOut: socket.options?.acceptTimeout,
+    );
+    masks['recvMenssage'] = IsolateInfo(
+      unique: true,
+      menssage: "You already waiting for data",
+      action: socket._recvMenssageMethod,
+    );
+    masks['recvFile'] = IsolateInfo(
+      unique: true,
+      menssage: "You already waiting for a File",
+      action: socket._recvFileMethod,
+    );
+    masks['sendFile'] = IsolateInfo(
+      unique: true,
+      menssage: "You already waiting for a File",
+      action: socket._sendFileMethod,
+    );
+  }
+}
+
