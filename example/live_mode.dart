@@ -66,20 +66,28 @@ void main() async {
   final lestsBytes = lastPayload.codeUnits;
   final middleBytes = List.generate(1316 - firstPayload.codeUnits.length, (elm) => 0);
   
-  clientSocket.sendStream(Uint8List.fromList([...fistsBytes, ...middleBytes, ...lestsBytes]), chunked: true);
+  Future.delayed(Duration(seconds: 1), (){
+    clientSocket.sendStream(Uint8List.fromList([...fistsBytes, ...middleBytes, ...lestsBytes]), chunked: true);
+    print('sended');
+  });
 
-  await for (final event in epoll.waitAsStream()){
-    final receivedMessage = await handle.recvStream;
+  epoll.timeOutMs = 1010;
+
+  await for (final event in epoll.waitStream()){
+    print("getting the message");
+    final receivedMessage = await event.socket.recvStream; /// as the handle is the unique scoket registred, event.socket == handle
     print('Received message: ${String.fromCharCodes(receivedMessage)}');
   }
 
+
   // Cleanup
+  epoll.dispose();
   print('\n7. Cleaning up resources...');
   clientSocket.dispose();
   print('   ✓ Client socket closed');
   serverSocket.dispose();
   print('   ✓ Server socket closed');
-  handle.dispose();
+  // handle.dispose();
   print('   ✓ handle closed');
   Srt.cleanUp();
   print('   ✓ SRT library cleaned up\n');

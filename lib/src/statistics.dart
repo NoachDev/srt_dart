@@ -1,5 +1,6 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/address.dart';
@@ -12,97 +13,104 @@ import 'package:srt_dart/src/srt_socket.dart';
 /// data transfer progress and diagnosing network issues.
 class SocketStats {
   /// Timestamp when these statistics were collected (milliseconds)
-  final int msTimeStamp;
+  int msTimeStamp;
 
   /// Total packets sent
-  final int pktSentTotal;
+  int pktSentTotal;
 
   /// Total packets received
-  final int pktRecvTotal;
+  int pktRecvTotal;
 
   /// Total packets lost on send
-  final int pktSndLossTotal;
+  int pktSndLossTotal;
 
   /// Total packets lost on receive
-  final int pktRcvLossTotal;
+  int pktRcvLossTotal;
 
   /// Total packets retransmitted
-  final int pktRetransTotal;
+  int pktRetransTotal;
 
   /// Total bytes sent
-  final int byteSentTotal;
+  int byteSentTotal;
 
   /// Total bytes received
-  final int byteRecvTotal;
+  int byteRecvTotal;
 
   /// Current send rate in Mbps
-  final double mbpsSendRate;
+  double mbpsSendRate;
 
   /// Current receive rate in Mbps
-  final double mbpsRecvRate;
+  double mbpsRecvRate;
 
   /// Round trip time in milliseconds
-  final double msRTT;
+  double msRTT;
 
   /// Available bandwidth in Mbps
-  final double mbpsBandwidth;
+  double mbpsBandwidth;
 
   /// Packets in send buffer
-  final int pktSndBuf;
+  int pktSndBuf;
 
   /// Bytes in send buffer
-  final int byteSndBuf;
+  int byteSndBuf;
 
   /// Packets in receive buffer
-  final int pktRcvBuf;
+  int pktRcvBuf;
 
   /// Bytes in receive buffer
-  final int byteRcvBuf;
+  int byteRcvBuf;
 
-  final int byteSentUniqueTotal;
+  int byteSentUniqueTotal;
+
+  int _recvPointer = 0;
+
+  int get recvPointer => _recvPointer;
+
+  void addToPointer() {
+    _recvPointer++;
+  }
 
   /// Create a new SocketStats
   SocketStats({
-    required this.msTimeStamp,
-    required this.pktSentTotal,
-    required this.pktRecvTotal,
-    required this.pktSndLossTotal,
-    required this.pktRcvLossTotal,
-    required this.pktRetransTotal,
-    required this.byteSentTotal,
-    required this.byteRecvTotal,
-    required this.mbpsSendRate,
-    required this.mbpsRecvRate,
-    required this.msRTT,
-    required this.mbpsBandwidth,
-    required this.pktSndBuf,
-    required this.byteSndBuf,
-    required this.pktRcvBuf,
-    required this.byteRcvBuf,
-    required this.byteSentUniqueTotal,
+    this.msTimeStamp = 0,
+    this.pktSentTotal = 0,
+    this.pktRecvTotal = 0,
+    this.pktSndLossTotal = 0,
+    this.pktRcvLossTotal = 0,
+    this.pktRetransTotal = 0,
+    this.byteSentTotal = 0,
+    this.byteRecvTotal = 0,
+    this.mbpsSendRate = 0,
+    this.mbpsRecvRate = 0,
+    this.msRTT = 0,
+    this.mbpsBandwidth = 0,
+    this.pktSndBuf = 0,
+    this.byteSndBuf = 0,
+    this.pktRcvBuf = 0,
+    this.byteRcvBuf = 0,
+    this.byteSentUniqueTotal = 0,
   });
 
   /// Create SocketStats from native SRT_TRACEBSTATS structure
-  factory SocketStats.fromNative(CBytePerfMon stats) {
-    return SocketStats(
-      msTimeStamp: stats.msTimeStamp,
-      pktSentTotal: stats.pktSentTotal,
-      pktRecvTotal: stats.pktRecvTotal,
-      pktSndLossTotal: stats.pktSndLossTotal,
-      pktRcvLossTotal: stats.pktRcvLossTotal,
-      pktRetransTotal: stats.pktRetransTotal,
-      byteSentTotal: stats.byteSentTotal,
-      byteRecvTotal: stats.byteRecvTotal,
-      mbpsSendRate: stats.mbpsSendRate,
-      mbpsRecvRate: stats.mbpsRecvRate,
-      msRTT: stats.msRTT,
-      mbpsBandwidth: stats.mbpsBandwidth,
-      pktSndBuf: stats.pktSndBuf,
-      byteSndBuf: stats.byteSndBuf,
-      pktRcvBuf: stats.pktRcvBuf,
-      byteRcvBuf: stats.byteRcvBuf,
-      byteSentUniqueTotal: stats.byteSentUniqueTotal,
-    );
+  void updateFromNative(CBytePerfMon stats) {
+    msTimeStamp = stats.msTimeStamp;
+    pktSentTotal = stats.pktSentTotal;
+    pktRecvTotal = stats.pktRecvTotal;
+    pktSndLossTotal = stats.pktSndLossTotal;
+    pktRcvLossTotal = stats.pktRcvLossTotal;
+    pktRetransTotal = stats.pktRetransTotal;
+    byteSentTotal = stats.byteSentTotal;
+    byteRecvTotal = stats.byteRecvTotal;
+    mbpsSendRate = stats.mbpsSendRate;
+    mbpsRecvRate = stats.mbpsRecvRate;
+    msRTT = stats.msRTT;
+    mbpsBandwidth = stats.mbpsBandwidth;
+    pktSndBuf = stats.pktSndBuf;
+    byteSndBuf = stats.byteSndBuf;
+    // pktRcvBuf = max(0, stats.pktRcvBuf - _recvPointer);
+    pktRcvBuf = stats.pktRcvBuf;
+    byteRcvBuf = stats.byteRcvBuf;
+    byteSentUniqueTotal = stats.byteSentUniqueTotal;
   }
 
   /// Calculate packet loss ratio as a percentage

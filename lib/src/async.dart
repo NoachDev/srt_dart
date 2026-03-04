@@ -1,5 +1,6 @@
 import 'dart:isolate';
 
+
 /// [bool] identify if is unique or can have mutlipys
 class IsolateData {
   final receivePort = ReceivePort();
@@ -8,7 +9,7 @@ class IsolateData {
   IsolateData();
 }
 
-class IsolateInfo{
+class IsolateInfo {
   final String? menssage;
   final bool unique;
   final int? timeOut;
@@ -21,7 +22,6 @@ class IsolateInfo{
     this.menssage,
     this.timeOut,
   });
-
 }
 
 /// Manger of Isolates for async operations
@@ -31,18 +31,26 @@ class IsolateInfo{
 ///
 abstract class ThreadMananger {
   final Map<String, IsolateInfo> masks = {};
-  final Map<String, List<IsolateData>> _threads = {};
+  final Map<String, Map<int, IsolateData>> _threads = {};
+  int _PID_POINTER = 0;
 
-  void dispose() {
-    for (final threads in _threads.values) {
-      for (final thread in threads) {
-        thread.receivePort.close();
-      }
-    }
-    _threads.clear();
+  void removeData(String name, int pid) {
+    final data = _threads[name]![pid]!;
+
+    data.isolate.kill(priority: Isolate.immediate);
+    data.receivePort.close();
+    _threads[name]!.remove(pid);
   }
 
-  Future<dynamic> runInIsolate(String name, { dynamic arg }) async {
+  void clean() {
+    for (final mask in _threads.keys) {
+      for (final pid in _threads[mask]!.keys) {
+        removeData(mask, pid);
+      }
+    }
+  }
+
+  Future<IsolateData> runInIsolate(String name, {dynamic arg}) async {
     if (!masks.containsKey(name)) {
       throw ArgumentError("Invalid thread mask name $name");
     }
@@ -54,29 +62,40 @@ abstract class ThreadMananger {
         throw Exception(threadInfo.menssage);
       }
     } else {
-      _threads[name] = [];
+      _threads[name] = {};
     }
 
     final data = IsolateData();
 
     data.isolate = await Isolate.spawn(
-      (sendPort) {
+      (sendPort) async {
         late dynamic result;
+
         if (arg != null) {
           result = threadInfo.action(arg);
-        }else{
+        } else {
           result = threadInfo.action();
         }
+
         sendPort.send(result);
       },
       data.receivePort.sendPort,
+      onError: data.receivePort.sendPort,
       debugName: "Isolate from $name PID ${_threads[name]!.length}",
       errorsAreFatal: true,
     );
 
-    _threads[name]!.add(data);
+    _threads[name]![_PID_POINTER++] = (data);
+
+    return data;
+  }
+
+  Future<dynamic> getFisrt(String name, {dynamic arg}) async {
+    final newPID = _PID_POINTER;
 
     try {
+      final IsolateData data = await runInIsolate(name, arg: arg);
+      final threadInfo = masks[name]!;
       final elem = data.receivePort.first;
 
       if (threadInfo.timeOut != null) {
@@ -84,13 +103,17 @@ abstract class ThreadMananger {
         return await elem.timeout(Duration(milliseconds: threadInfo.timeOut!));
       }
 
-      return await elem;
-    }
-    finally {
-      data.isolate.kill(priority: Isolate.immediate);
-      data.receivePort.close();
-      _threads[name]!.remove(data);
-    }
+      final result = await elem;
 
+      if (result is List) {
+        if (result.isNotEmpty && result[0] is String && result[0].contains("SrtException")) {
+          throw result[0];
+        }
+      }
+
+      return result;
+    } finally {
+      removeData(name, newPID);
+    }
   }
 }

@@ -45,13 +45,15 @@ class SrtSocket {
   /// The socket file descriptor from SRT
   final int _socketHandle;
 
+  final _statistics = SocketStats();
+
+  late SocketThread _asyncControl;
+
   /// Whether this socket has been closed
   bool _isClosed = false;
 
   /// Options of the socket.
   SocketOptions? options;
-  
-  SocketThread? asyncControl;
 
   /// Get the socket handle
   int get socketHandle => _socketHandle;
@@ -78,8 +80,43 @@ class SrtSocket {
   Future<SrtSocket> get accept async {
     _checkNotClosed();
 
-    final data = await asyncControl!.runInIsolate("Accept");
-    return SrtSocket.fromHandle(data);
+    final data = await _asyncControl.getFisrt("Accept");
+    final socket = SrtSocket.fromHandle(data);
+    socket._asyncControl = SocketThread(socket);
+    Srt.addSocket = socket;
+    return socket;
+  }
+
+  /// Get transmission statistics for this socket
+  ///
+  /// This wraps the native [srt_bstats] function to return current
+  /// performance metrics and statistics for the socket.
+  ///
+  /// [clear] if true, resets the statistics counters after retrieval
+  ///
+  /// Returns a [SocketStats] object containing transmission metrics like
+  /// send/receive rates, packet loss, RTT, buffer usage, etc.
+  ///
+  /// Throws [SrtException] if stats retrieval fails
+  ///
+  SocketStats get statistics{
+    _checkNotClosed();
+
+    final perf = calloc<CBytePerfMon>();
+    try {
+      final result = Srt.bindings.srt_bstats(
+        _socketHandle,
+        perf,
+        1,
+      );
+
+      checkSrtResult(result, operation: "get stats", handle: _socketHandle);
+
+      return _statistics..updateFromNative(perf.ref);
+
+    } finally {
+      calloc.free(perf);
+    }
   }
 
   /// Receive data from this socket in stream mode
@@ -97,7 +134,7 @@ class SrtSocket {
   Future<Uint8List> get recvStream async {
     _checkNotClosed();
 
-    final SrtMessage data = await asyncControl!.runInIsolate("recvMessage");
+    final SrtMessage data = await _asyncControl.getFisrt("RecvMessage");
     return data.payload;
   }
 
@@ -116,7 +153,7 @@ class SrtSocket {
   Future<SrtMessage> get recvMessage async {
     _checkNotClosed();
 
-    return await asyncControl!.runInIsolate("recvMessage");
+    return await _asyncControl.getFisrt("RecvMessage");
   }
 
   /// Create a new SRT socket
@@ -140,7 +177,7 @@ class SrtSocket {
 
     options!.applyTo(_socketHandle);
 
-    asyncControl = SocketThread(this);
+    _asyncControl = SocketThread(this);
   }
 
   /// Bind this socket to the specified address and port
@@ -276,7 +313,7 @@ class SrtSocket {
   void dispose() {
     if (_isClosed) return;
 
-    asyncControl?.dispose();
+    _asyncControl.clean();
 
     final result = Srt.bindings.srt_close(_socketHandle);
     if (result != -1) {
@@ -287,9 +324,7 @@ class SrtSocket {
   /// Internal: Create from an existing socket handle (for accept())
   SrtSocket.fromHandle(int handle)
     : _socketHandle = handle,
-      options = SocketOptions() {
-    asyncControl = SocketThread(this);
-  }
+      options = SocketOptions();
 
   /// Check if socket is closed, throw if it is
   void _checkNotClosed() {
@@ -411,9 +446,9 @@ class SrtSocket {
   ///
   Future<int> sendFile(FileOptions fileOtions) async {
     _checkNotClosed();
-    
+
     await fileOtions.start();
-    final int data = await asyncControl!.runInIsolate("sendFile", arg : fileOtions);
+    final int data = await _asyncControl.getFisrt("SendFile", arg: fileOtions);
     return data;
   }
 
@@ -432,43 +467,12 @@ class SrtSocket {
   ///
   /// Throws [SrtException] if the receive fails or if the parent directory doesn't exist
   ///
-  Future<int> recvFile(FileOptions fileOtions) async{
+  Future<int> recvFile(FileOptions fileOtions) async {
     _checkNotClosed();
 
     await fileOtions.start();
-    final int data = await asyncControl!.runInIsolate("recvFile", arg : fileOtions);
+    final int data = await _asyncControl.getFisrt("RecvFile", arg: fileOtions);
     return data;
-  }
-
-  /// Get transmission statistics for this socket
-  ///
-  /// This wraps the native [srt_bstats] function to return current
-  /// performance metrics and statistics for the socket.
-  ///
-  /// [clear] if true, resets the statistics counters after retrieval
-  ///
-  /// Returns a [SocketStats] object containing transmission metrics like
-  /// send/receive rates, packet loss, RTT, buffer usage, etc.
-  ///
-  /// Throws [SrtException] if stats retrieval fails
-  ///
-  SocketStats getStats({bool clear = false}) {
-    _checkNotClosed();
-
-    final perf = calloc<CBytePerfMon>();
-    try {
-      final result = Srt.bindings.srt_bstats(
-        _socketHandle,
-        perf,
-        clear ? 1 : 0,
-      );
-
-      checkSrtResult(result, operation: "get stats", handle: _socketHandle);
-
-      return SocketStats.fromNative(perf.ref);
-    } finally {
-      calloc.free(perf);
-    }
   }
 
   /// Get the local address this socket is bound to
@@ -618,6 +622,7 @@ class SrtSocket {
 
     return bytesReceived;
   }
+
   int _sendFileMethod(FileOptions options) {
     final bytesReceived = Srt.bindings.srt_sendfile(
       _socketHandle,
@@ -644,21 +649,20 @@ class SocketThread extends ThreadMananger {
       action: socket._acceptMethod,
       // timeOut: socket.options?.acceptTimeout,
     );
-    masks['recvMessage'] = IsolateInfo(
+    masks['RecvMessage'] = IsolateInfo(
       unique: true,
       menssage: "You already waiting for data",
       action: socket._recvMessageMethod,
     );
-    masks['recvFile'] = IsolateInfo(
+    masks['RecvFile'] = IsolateInfo(
       unique: true,
       menssage: "You already waiting for a File",
       action: socket._recvFileMethod,
     );
-    masks['sendFile'] = IsolateInfo(
+    masks['SendFile'] = IsolateInfo(
       unique: true,
       menssage: "You already waiting for a File",
       action: socket._sendFileMethod,
     );
   }
 }
-

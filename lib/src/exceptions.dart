@@ -1,6 +1,4 @@
 import 'package:ffi/ffi.dart';
-import 'package:srt_dart/main.dart';
-import 'package:srt_dart/src/srt_socket.dart';
 import 'package:srt_dart/srt_dart.dart';
 
 /// Exception raised when an SRT operation fails.
