@@ -54,8 +54,8 @@ import 'dart:io' show InternetAddress;
 final serverSocket = SrtSocket(options: SocketOptions.liveMode(sender: false)) /// Create the socket of server
 serverSocket.bind(InternetAddress.loopbackIPv4, 9000); /// set the ip (127.0.0.1) and port of the server will listen
 serverSocket.listen(backlog: 1); /// listen for clients
-final handle = serverSocket.accept(); /// accpet one client, and get one socket to manage this connection 
-final receivedData = await handle.recvStream; /// this receiving not have a timeout, for a more refined aprouch use the epoll for a continuos strem (see Example/live_mode)
+final handle = await serverSocket.accept(); /// accpet one client, and get one socket to manage this connection 
+final receivedData = await handle.recvStream; /// this receiving have a timeout, for a more refined aprouch use the epoll (see Example/live_mode)
 print(receivedData.lenght) /// The lenght of received data
 ```
 
@@ -65,9 +65,9 @@ import 'dart:io' show InternetAddress;
 
 final address = InternetAddress.loopbackIPv4; // the ip of server
 final clientSocket = SrtSocket(options: SocketOptions.liveMode(sender: true)); /// Create the socket of Client
-clientSocket.connect(address, 9000); /// try connect in ip (127.0.0.1) and port (9000) of server
-final text = "when need send a text, use the menssage api"; /// the data to be send
-clientSocket.sendStrem(Uint8List.fromList(text.codeUnits)); /// send the data to server
+await clientSocket.connect(address, 9000); /// try connect in ip (127.0.0.1) and port (9000) of server
+final text = "when need send a text, use the menssage api"; /// the data to be sended
+clientSocket.sendStrem(Uint8List.fromList(text.codeUnits)); /// sending the data to server
 ```
 
 ### On end, close the SRT.
