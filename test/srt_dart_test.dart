@@ -52,10 +52,10 @@ void main() {
       expect(() => socket1.connect(InternetAddress.loopbackIPv4, 5001), throwsA(isA<SrtException>()));
     });
 
-    test('Multiply connects in a same server and connect after listen succeeds', () {
-      socket2.connect(InternetAddress.loopbackIPv4, 5000);
-      socket4.connect(InternetAddress.loopbackIPv4, 5000);
-      socket5.connect(InternetAddress.loopbackIPv4, 5000);
+    test('Multiply connects in a same server and connect after listen succeeds', () async {
+      await socket2.connect(InternetAddress.loopbackIPv4, 5000);
+      await socket4.connect(InternetAddress.loopbackIPv4, 5000);
+      await socket5.connect(InternetAddress.loopbackIPv4, 5000);
     });
 
     test("Can`t connect with more than alowed by backlog", (){

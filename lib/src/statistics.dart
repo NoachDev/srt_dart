@@ -1,6 +1,5 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
-import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:srt_dart/src/address.dart';

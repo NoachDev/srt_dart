@@ -75,7 +75,7 @@ class SrtEpoll {
   /// A register of Sockets events, if true has a read Event
   final Map<int, bool> _registeredEvents = {};
 
-  int _timeoutMs = 1;
+  int _timeoutMs = 100;
   int _maxEvents = 100;
 
   late EpollThread _asyncControl;
@@ -278,14 +278,19 @@ class SrtEpoll {
   /// Throws [SrtException] if wait operations fail
   ///
   Stream<EpollEvent> waitStream({bool stopOnTimeout = true}) async* {
+    // Timer.periodic(Duration(milliseconds: ), callback)
     while (!_isClosed) {
       try {
         final events = await waitAsync(timeOutIsCritical: false, errorsIsCritical: stopOnTimeout);
+        if (events.isEmpty) {
+          if(stopOnTimeout){
+            break;
+          }
+          await Future.delayed(Duration(milliseconds: _timeoutMs));
+        }
+
         for (final event in events) {
           yield event;
-        }
-        if (events.isEmpty && stopOnTimeout) {
-          break;
         }
       } catch (e) {
         if (_isClosed) {

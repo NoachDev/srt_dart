@@ -99,21 +99,16 @@ class SrtSocket {
   ///
   /// Throws [SrtException] if stats retrieval fails
   ///
-  SocketStats get statistics{
+  SocketStats get statistics {
     _checkNotClosed();
 
     final perf = calloc<CBytePerfMon>();
     try {
-      final result = Srt.bindings.srt_bstats(
-        _socketHandle,
-        perf,
-        1,
-      );
+      final result = Srt.bindings.srt_bstats(_socketHandle, perf, 1);
 
       checkSrtResult(result, operation: "get stats", handle: _socketHandle);
 
       return _statistics..updateFromNative(perf.ref);
-
     } finally {
       calloc.free(perf);
     }
@@ -282,24 +277,16 @@ class SrtSocket {
   ///
   /// Throws [SrtException] if connection fails
   ///
-  void connect(InternetAddress address, int port) {
+  Future<void> connect(InternetAddress address, int port, [int wait = 100]) async {
     _checkNotClosed();
+    if (status == SRT_SOCKSTATUS.SRTS_CONNECTED) return;
 
-    if (status != SRT_SOCKSTATUS.SRTS_CONNECTED) {
-      final sockAddr = SrtAddress.fromInternetAddress(address, port);
-      try {
-        final size = address.type == InternetAddressType.IPv4
-            ? ffi.sizeOf<sockaddr_in>()
-            : ffi.sizeOf<sockaddr_in6>();
-        final result = Srt.bindings.srt_connect(_socketHandle, sockAddr, size);
-        checkSrtResult(
-          result,
-          operation: 'srt_connect(${address.address}:$port)',
-          handle: _socketHandle,
-        );
-      } finally {
-        calloc.free(sockAddr);
-      }
+    await _asyncControl.getFisrt(
+      "Connect",
+      arg: SocketInterface(address, port),
+    );
+    if (wait > 0) {
+      await Future.delayed(Duration(milliseconds: wait));
     }
   }
 
@@ -352,6 +339,10 @@ class SrtSocket {
   ///
   int sendStream(Uint8List data, {bool chunked = false}) {
     _checkNotClosed();
+
+    if (status != SRT_SOCKSTATUS.SRTS_CONNECTED){
+      return -1;
+    }
 
     if (data.isEmpty) return 0;
 
@@ -637,16 +628,45 @@ class SrtSocket {
 
     return bytesReceived;
   }
+
+  int _connectMethod(SocketInterface iInterface) {
+    final sockAddr = SrtAddress.fromInternetAddress(
+      iInterface.ipAddress,
+      iInterface.port,
+    );
+    try {
+      final size = iInterface.ipAddress.type == InternetAddressType.IPv4
+          ? ffi.sizeOf<sockaddr_in>()
+          : ffi.sizeOf<sockaddr_in6>();
+      final result = Srt.bindings.srt_connect(_socketHandle, sockAddr, size);
+      checkSrtResult(
+        result,
+        operation: 'srt_connect($iInterface)',
+        handle: _socketHandle,
+      );
+
+      return 0;
+    } finally {
+      calloc.free(sockAddr);
+    }
+  }
 }
 
 class SocketThread extends ThreadMananger {
   final SrtSocket socket;
 
+  // TODO: Use Enum on masks
+
   SocketThread(this.socket) {
     masks['Accept'] = IsolateInfo(
       unique: false,
-      menssage: "You are already accepting incoming connections",
       action: socket._acceptMethod,
+      // timeOut: socket.options?.acceptTimeout,
+    );
+    masks['Connect'] = IsolateInfo(
+      unique: true,
+      menssage: "You already connecting",
+      action: socket._connectMethod,
       // timeOut: socket.options?.acceptTimeout,
     );
     masks['RecvMessage'] = IsolateInfo(
@@ -661,7 +681,7 @@ class SocketThread extends ThreadMananger {
     );
     masks['SendFile'] = IsolateInfo(
       unique: true,
-      menssage: "You already waiting for a File",
+      menssage: "You already sending a File",
       action: socket._sendFileMethod,
     );
   }

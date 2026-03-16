@@ -1,6 +1,5 @@
 import 'dart:isolate';
 
-
 /// [bool] identify if is unique or can have mutlipys
 class IsolateData {
   final receivePort = ReceivePort();
@@ -91,29 +90,31 @@ abstract class ThreadMananger {
   }
 
   Future<dynamic> getFisrt(String name, {dynamic arg}) async {
-    final newPID = _PID_POINTER;
-
-    try {
+    final oldPID = _PID_POINTER;
+    try{
       final IsolateData data = await runInIsolate(name, arg: arg);
-      final threadInfo = masks[name]!;
       final elem = data.receivePort.first;
 
-      if (threadInfo.timeOut != null) {
-        /// TODO: Resolve the errors with the C.
-        return await elem.timeout(Duration(milliseconds: threadInfo.timeOut!));
-      }
+      // if (threadInfo.timeOut != null) {
+      // final threadInfo = masks[name]!;
+      /// TODO: Resolve the errors with the C.
+      //   return await elem.timeout(Duration(milliseconds: threadInfo.timeOut!));
+      // }
 
       final result = await elem;
 
       if (result is List) {
-        if (result.isNotEmpty && result[0] is String && result[0].contains("SrtException")) {
+        if (result.isNotEmpty &&
+            result[0] is String &&
+            result[0].contains("SrtException")) {
           throw result[0];
         }
       }
 
       return result;
-    } finally {
-      removeData(name, newPID);
+    }
+    finally{
+      removeData(name, oldPID);
     }
   }
 }
