@@ -1,6 +1,6 @@
 name: srt_dart
 description: Bindings of Secure Reliable Transport (SRT) protocol for Dart.
-version: 1.0.0
+version: 1.1.0
 repository: https://github.com/NoachDev/srt_dart
 
 environment:

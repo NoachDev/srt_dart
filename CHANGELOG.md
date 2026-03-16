@@ -47,3 +47,10 @@
   - `sendStrem` with a chunked mode for large data.
 
 - Comprehensive unit tests for stream and message modes, and a documentation.
+
+## 1.1.0
+
+### Enhence the even-drive methods
+  - creating a class `ThreadMananger` to manage isolates -> async methods
+  - update the epoll to detect incoming data
+    - Unifing the `waitStream` / `waitMessage` of SrtSocket in Epoll.
